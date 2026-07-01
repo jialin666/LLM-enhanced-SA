@@ -1,7 +1,9 @@
 """Final feature generation with the selected prompt (manuscript Sec 2.1-2.2).
 
-Using the selected target prompt P* (the highest-graded candidate from
-``select_prompt.py``), generate, for every patient in a cohort:
+Using the selected target prompt P* -- either the highest-graded candidate from
+a local ``select_prompt.py`` run, or a specific one chosen with ``--prompt-id``
+from ``prompts/<dataset>_target_prompts.json`` -- generate, for every patient in
+a cohort:
 
   * the free-text clinical narrative  Z_i = LLM(X_i | P*),
   * the numeric prognostic estimates  N_i = (p_5y, r_2y, c)   (a constrained
@@ -101,10 +103,33 @@ def _embed(client, texts, model="text-embedding-3-small"):
     return np.stack(out, axis=0)
 
 
-def _load_selected_prompt(dataset: str) -> str:
+def _load_selected_prompt(dataset: str, prompt_id=None) -> str:
+    """Return the target-prompt template to use for generation.
+
+    ``prompt_id`` selects a specific candidate from ``<dataset>_target_prompts.json``.
+    If not given, the selection defers to a local grades file
+    ``<dataset>_templates_grades.json`` (written by ``select_prompt.py``) and the
+    highest-graded candidate P* is used. Grades are a per-run artefact and are not
+    shipped with the repository.
+    """
     with open(os.path.join(PROMPTS_DIR, f"{dataset}_target_prompts.json")) as f:
         prompts = json.load(f)
-    with open(os.path.join(PROMPTS_DIR, f"{dataset}_templates_grades.json")) as f:
+
+    if prompt_id is not None:
+        key = str(prompt_id)
+        if key not in prompts:
+            raise KeyError(f"prompt id {key!r} not in {dataset}_target_prompts.json "
+                           f"(available: {list(prompts)[:5]}...)")
+        return prompts[key]["template"]
+
+    grades_path = os.path.join(PROMPTS_DIR, f"{dataset}_templates_grades.json")
+    if not os.path.exists(grades_path):
+        raise FileNotFoundError(
+            f"No selection found for {dataset}. Either run "
+            f"`python -m text_generation.select_prompt --dataset {dataset}` to grade "
+            f"the candidates and select P*, or pass --prompt-id to choose one directly."
+        )
+    with open(grades_path) as f:
         grades = json.load(f)
     best_id = max(grades, key=grades.get)
     return prompts[best_id]["template"]
@@ -126,11 +151,11 @@ def _indexed_cohort(dataset: str):
 
 def generate_for_dataset(dataset: str, narrative_model="gpt-4o",
                          numeric_model="gpt-4o", embedding_model="text-embedding-3-small",
-                         max_patients=None):
+                         max_patients=None, prompt_id=None):
     cohort, df = _indexed_cohort(dataset)
     if max_patients is not None:
         df = df.iloc[:max_patients]
-    template = _load_selected_prompt(dataset)
+    template = _load_selected_prompt(dataset, prompt_id=prompt_id)
     client = _client()
 
     narr_dir = _csv_path("data", "v4", "narratives", dataset)
@@ -181,9 +206,13 @@ if __name__ == "__main__":
     p.add_argument("--numeric-model", default="gpt-4o")
     p.add_argument("--embedding-model", default="text-embedding-3-small")
     p.add_argument("--max-patients", type=int, default=None)
+    p.add_argument("--prompt-id", default=None,
+                   help="candidate id from <dataset>_target_prompts.json to use; "
+                        "if omitted, the highest-graded prompt from a local "
+                        "select_prompt run (P*) is used")
     args = p.parse_args()
     generate_for_dataset(
         args.dataset, narrative_model=args.narrative_model,
         numeric_model=args.numeric_model, embedding_model=args.embedding_model,
-        max_patients=args.max_patients,
+        max_patients=args.max_patients, prompt_id=args.prompt_id,
     )

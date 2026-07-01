@@ -15,7 +15,8 @@ For one cohort:
 
 Outputs (under prompts/):
     <dataset>_target_prompts.json   candidate prompts keyed by id
-    <dataset>_templates_grades.json summed grade per candidate id
+    <dataset>_templates_grades.json summed grade per candidate id (per-run;
+                                    not tracked in git -- LLM outputs vary by run)
 
 Usage:
     python -m text_generation.select_prompt --dataset gbsg

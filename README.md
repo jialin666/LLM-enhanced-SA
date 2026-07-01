@@ -58,7 +58,7 @@ text_generation/           # automatic textual representation learning (Sec 2.2)
   select_prompt.py         #   KM reference labels -> grade candidates -> P*
   generate_features.py     #   apply P* -> narratives Z_i, numerics N_i, embeddings E_i
 
-prompts/                   # released candidate prompts + grades, per cohort
+prompts/                   # released candidate target prompts, per cohort
 docs/METHOD.md             # method write-up
 ```
 
@@ -101,9 +101,10 @@ candidate generation → KM-ordinal grading → selection):
 python -m text_generation.select_prompt --dataset gbsg
 ```
 
-This writes `prompts/gbsg_target_prompts.json` and
-`prompts/gbsg_templates_grades.json`. The released prompts are already in
-`prompts/`.
+This writes the candidate prompts to `prompts/gbsg_target_prompts.json` and
+their grades to `prompts/gbsg_templates_grades.json`. The released candidate
+prompts are already in `prompts/`; the grades are a per-run artefact (LLM
+outputs vary between runs) and are not tracked in git.
 
 **2. Generate per-patient features** with the selected prompt (narratives Z_i,
 numerics N_i, embeddings E_i):
@@ -111,6 +112,10 @@ numerics N_i, embeddings E_i):
 ```bash
 python -m text_generation.generate_features --dataset gbsg
 ```
+
+By default this uses the highest-graded prompt P\* from step 1. To skip grading
+and use a specific candidate directly, pass its id:
+`--prompt-id <id>` (ids are the keys in `prompts/gbsg_target_prompts.json`).
 
 This writes `data/v4_structured_gbsg.csv` and `data/embeddings_v4_gbsg.npy`.
 

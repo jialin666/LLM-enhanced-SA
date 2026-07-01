@@ -30,9 +30,10 @@ data/
 *.pkl
 *.pickle
 
-# LLM outputs (but keep the released prompt artifacts under prompts/)
+# LLM outputs (keep the released candidate prompts, but not per-run grades)
 *.json
 !prompts/*.json
+prompts/*_templates_grades.json
 
 # Environment
 .env
