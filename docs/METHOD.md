@@ -1,0 +1,92 @@
+# LLM-SA: Method
+
+This document describes the LLM-SA pipeline as implemented in this repository.
+Notation follows the manuscript.
+
+## 1. Notation
+
+For subject *i* in a cohort of size *N*, the survival data is
+`(T_i, δ_i, X_i)`, where `T_i` is the observed event/censoring time,
+`δ_i ∈ {0,1}` the event indicator, and `X_i ∈ R^p` the structured covariates.
+
+The LLM-enrichment step produces, per subject:
+
+- a numeric vector `N_i = (p_5y, r_2y, c) ∈ R^3` - the LLM-estimated 5-year
+  survival probability, 2-year event risk, and self-reported confidence;
+- a free-text clinical narrative `Z_i = LLM(X_i | P)` and its dense embedding
+  `E_i = EMB(Z_i) ∈ R^1536`.
+
+The augmented structured vector is `X̃_i = [X_i ‖ N_i] ∈ R^{p+3}`. The goal is an
+individualized survival curve `Ŝ_i(t | X̃_i, E_i)` on a quantile time grid built
+from the training-fold event times.
+
+## 2. Automatic medical textual representation learning
+
+Narrative generation is open-ended: many prompts produce clinically plausible
+text, but only some yield patient-specific representations useful for downstream
+survival prediction. The pipeline therefore searches over prompts.
+
+### 2.1 Meta prompt and candidate generation (`meta_prompt.py`)
+
+A meta prompt `P_meta` defines the desired prompt space through nine components
+(role assignment, task description, dataset description, feature list,
+requirements for target prompts, few-shot examples, structure variation, output
+format). Queried through several independent sampling runs, it produces a
+candidate set `C = {P_1, ..., P_M}`. Each candidate is an instruction template
+containing the literal `{FEATURES}` placeholder; candidates vary in **role
+specification** and **structural format** (Types A-D: features-first,
+instructions-first, integrated case, and alternate JSON/table/vignette layouts).
+
+### 2.2 Optimal target-prompt selection (`select_prompt.py`, `score.py`)
+
+Prompt evaluation is cast as an ordinal alignment task.
+
+- **Reference labels.** A Kaplan-Meier estimate `Ŝ(t)` is fitted on the
+  evaluation subset; each subject's `Ŝ(T_i)` is discretized into three tertiles
+  `y_i ∈ {low, intermediate, high}`.
+- **Predicted labels.** For each candidate `P_m`, the generated narrative
+  `Z_{i,m}` is passed back to the LLM, which infers `ŷ_{i,m} ∈ {low,
+  intermediate, high}`.
+- **Scoring.** The ordinal matching function
+
+  ```
+  phi(y, ŷ) = +1 if equal, 0 if adjacent, -1 if opposite (low vs high)
+  ```
+
+  gives the candidate score `S(P_m) = Σ_i phi(y_i, ŷ_{i,m})`. The selected
+  prompt is `P* = argmax_m S(P_m)`.
+
+The released candidate prompts and their grades are in `prompts/`.
+
+### 2.3 Final feature generation (`generate_features.py`)
+
+The selected prompt `P*` generates the final per-patient narrative `Z_i`; a
+constrained-JSON call grounded in a per-cohort knowledge briefing produces the
+numerics `N_i`; and `Z_i` is embedded to `E_i` with `text-embedding-3-small`.
+
+## 3. Heterogeneous ensemble survival model (`llmsa/model.py`)
+
+Three complementary base learners are fitted on the training fold:
+
+1. **CoxPH** on the one-hot structured covariates + `N_i`.
+2. **RSF** on the same feature block.
+3. **DeepSurv + text** - a Cox-style MLP on the structured features plus the
+   PCA-reduced narrative embedding `E_i`.
+
+Each base learner emits a survival curve on the canonical time grid. A
+**simplex-constrained meta-learner** combines the three curves: weights
+`w ≥ 0, Σw = 1` are found by projected gradient descent minimising squared error
+against validation-fold survival labels, with an L2 prior pulling `w` toward the
+uniform vector `[1/3, 1/3, 1/3]` (strength `meta_prior_lam`; `lam = 0` recovers
+the vanilla simplex least-squares stack).
+
+Folds are disjoint: base learners are fitted on train, meta-weights on val, and
+everything is evaluated on test.
+
+## 4. Evaluation (`llmsa/metrics.py`, `llmsa/eval.py`)
+
+Discrimination is Uno's IPCW concordance; calibration/accuracy is the IPCW
+Integrated Brier Score over the quantile time grid. Every model - baselines and
+LLM-SA - is scored under identical IPCW definitions and identical per-seed
+70/10/20 splits. SUPPORT is evaluated on a fixed 1500-patient event-stratified
+subsample by default.

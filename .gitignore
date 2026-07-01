@@ -21,16 +21,18 @@ ENV/
 .ipynb_checkpoints/
 *.ipynb
 
-# Data
+# Data (large; regenerate with text_generation/)
+data/
 *.csv
+*.npy
 *.h5
 *.hdf5
 *.pkl
 *.pickle
 
-# LLM outputs
+# LLM outputs (but keep the released prompt artifacts under prompts/)
 *.json
-!1_gbsg_target_prompts.json
+!prompts/*.json
 
 # Environment
 .env
