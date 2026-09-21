@@ -1,23 +1,67 @@
-"""Meta prompt and candidate target-prompt generation (manuscript Sec 2.2.1).
+"""Meta prompt and candidate target-prompt generation (manuscript Sec 3.2.1).
 
 A single meta prompt ``P_meta`` defines the desired space of target prompts and,
 queried through several independent sampling runs, produces a diverse set of
 candidate target prompts ``C = {P_1, ..., P_M}``. Each candidate is a full
-instruction template that contains the literal ``{FEATURES}`` placeholder and,
-when filled with a patient's covariates, instructs the LLM to write a clinical
-narrative for that patient.
+instruction template that contains two literal placeholders -- ``{BRIEFING}``
+(cohort background knowledge) and ``{FEATURES}`` (one patient's covariates) --
+and, when filled, instructs the LLM to produce BOTH a clinical narrative Z_i
+and a JSON block with the numeric prognostic estimates N_i in a single call
+(v5 unified design).
 
 Also provides the helpers to render a patient's features into the ``{FEATURES}``
-block, fill a template, and generate a narrative from a filled template.
+block, fill a template, and generate the narrative + numerics from a filled
+template.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Dict, List, Literal
+import re
+from typing import Dict, List, Literal, Optional, Tuple
 
 from openai import OpenAI
+
+
+# Text inserted into {BRIEFING} when generation runs briefing-free
+# (the R2-M3 no-briefing ablation arm).
+BRIEFING_EMPTY = "(no additional background provided)"
+
+# The three numeric fields consumed downstream (N_i).
+NUMERIC_FIELDS = ("estimated_5yr_survival_prob", "estimated_2yr_event_risk", "confidence")
+
+#: Cohorts whose follow-up is far shorter than the default 5-year / 2-year
+#: horizons, so that both anchors would fall outside the observable window.
+#: Values are ``(short_label, long_label)`` used to rename the two JSON keys.
+#: Heart Failure: max follow-up 285 days (median event time 44 days), so the
+#: default prompt asks for estimates the cohort can never observe. 90d/180d
+#: bracket 69 and 89 of its 96 events respectively.
+COHORT_HORIZONS = {
+    # follow-up 285 d, median event 44 d; 90d/180d bracket 69 and 89 of 96 events
+    "heartfailure": ("90d", "180d"),
+    # follow-up 364 d, median event 91 d; 90d/270d bracket 46 and 94 of 96 events
+    "aids": ("90d", "270d"),
+}
+
+
+def horizon_fields(short_label: str, long_label: str):
+    """JSON key names for a cohort-matched pair of horizons.
+
+    Returned in the same order as ``NUMERIC_FIELDS`` (long-horizon survival,
+    short-horizon event risk, confidence) so the storage schema is unchanged.
+    """
+    return (f"estimated_{long_label}_survival_prob",
+            f"estimated_{short_label}_event_risk",
+            "confidence")
+
+
+def retarget_horizons(template: str, short_label: str, long_label: str) -> str:
+    """Rewrite a target prompt's numeric block to a different horizon pair."""
+    new = horizon_fields(short_label, long_label)
+    for old, nw in zip(NUMERIC_FIELDS, new):
+        template = template.replace(old, nw)
+    return template
 
 
 # ---------------------------------------------------------------------------
@@ -31,18 +75,32 @@ FEWSHOT_EXAMPLES: List[Dict] = [
         "template": (
             "Clinical Features:\n{{FEATURES}}\n\n"
             "You are an oncologist specializing in survival prediction and patient prognosis.\n\n"
+            "Background knowledge for this patient population (use as context to inform your interpretation; "
+            "your assessment must remain specific to this patient and must not simply restate these background figures):\n"
+            "{{BRIEFING}}\n\n"
             "Write a comprehensive, fact-based narrative of 600-800 words that will be used as input to a survival analysis model.\n"
             "Your audience consists of medical researchers and machine learning experts, so maintain a professional and evidence-informed tone.\n\n"
             "Your narrative must:\n"
             "- Explain each clinical feature in its medical context (include what each feature means and its typical clinical interpretation).\n"
-            "- Provide a synthesized risk profile (low, intermediate, or high survival probability) based on the features.\n"
-            "- Include clear qualitative declarations about survival probability (e.g., 'The presence of multiple positive nodes suggests a significantly lower survival probability').\n"
-            "- Discuss how each feature contributes to the prognosis, referencing standard clinical thresholds and guidelines (e.g., staging cutoffs, ER/PR thresholds where applicable).\n"
+            "- Reason explicitly about how this patient's specific combination of features - including their interactions - shapes the prognosis, "
+            "referencing standard clinical thresholds and guidelines (e.g., staging cutoffs, ER/PR thresholds where applicable).\n"
+            "- Provide a synthesized risk profile (low, intermediate, or high survival probability) with clear qualitative declarations about survival probability.\n"
+            "- Be patient-specific: a patient with different feature values must receive a visibly different narrative and different numerical estimates.\n"
             "- Ensure all reasoning is evidence-based and avoids unverifiable claims.\n\n"
+            "After the narrative, end your response with exactly one JSON code block:\n\n"
+            "```json\n"
+            "{{\n"
+            '  "estimated_5yr_survival_prob": <float 0.0-1.0>,\n'
+            '  "estimated_2yr_event_risk": <float 0.0-1.0>,\n'
+            '  "confidence": <float 0.0-1.0>\n'
+            "}}\n"
+            "```\n\n"
+            "The estimates must be consistent with your narrative and specific to this patient; do not default to cohort averages. "
+            "Nothing may follow the JSON block.\n\n"
             "Constraints:\n"
             "- Do NOT mention patient ID, raw survival time, or actual observed outcome.\n"
             "- Do NOT invent values not present in {{FEATURES}}.\n\n"
-            "Format the output as a coherent, well-structured report, with clear sections or paragraphs that could be used directly for model training."
+            "Format the narrative as a coherent, well-structured report, with clear sections or paragraphs."
         ),
     },
     {
@@ -50,15 +108,28 @@ FEWSHOT_EXAMPLES: List[Dict] = [
         "structure": "B",
         "template": (
             "You are a biostatistician who writes structured training narratives for survival models.\n\n"
-            "Your task is to produce a detailed, 600-800 word, fact-based report that uses the patient information provided below. "
-            "The report should be suitable for machine learning training and for review by medical experts.\n\n"
+            "Your task is to produce a detailed, 600-800 word, fact-based report that uses the patient information provided below, "
+            "followed by numerical prognostic estimates. The report should be suitable for machine learning training and for review by medical experts.\n\n"
+            "Background knowledge for this patient population (context only; your report and estimates must be patient-specific "
+            "and must not simply repeat these background statements):\n"
+            "{{BRIEFING}}\n\n"
             "Your report must:\n"
             "- Explain every feature, describing its domain meaning, measurement units, and prognostic implications.\n"
+            "- Reason explicitly about the joint effect of this patient's feature values, including interactions among features, "
+            "connecting them to risk stratification and proportional-risk intuition.\n"
             "- Provide a reasoned survival probability assessment (low, intermediate, or high) and justify it explicitly.\n"
-            "- Include qualitative statements about prognosis (e.g., 'The combination of favorable biomarkers and small tumor size suggests a higher survival probability').\n"
-            "- Connect your reasoning to survival analysis principles, such as risk stratification and proportional-risk intuition.\n"
             "- Incorporate medically/scientifically recognized knowledge beyond raw values, such as thresholds and typical treatment effects.\n"
+            "- Be patient-specific: different feature values must lead to visibly different reports and different estimates.\n"
             "- Remain strictly fact-based and professional.\n\n"
+            "End your response with exactly one JSON code block containing your numerical estimates, consistent with the report:\n\n"
+            "```json\n"
+            "{{\n"
+            '  "estimated_5yr_survival_prob": <float 0.0-1.0>,\n'
+            '  "estimated_2yr_event_risk": <float 0.0-1.0>,\n'
+            '  "confidence": <float 0.0-1.0>\n'
+            "}}\n"
+            "```\n\n"
+            "Nothing may follow the JSON block.\n\n"
             "Constraints:\n"
             "- Forbid mention of patient identifiers, observed survival times, or actual outcomes.\n"
             "- Do not speculate beyond established evidence.\n\n"
@@ -69,17 +140,19 @@ FEWSHOT_EXAMPLES: List[Dict] = [
 
 
 # ---------------------------------------------------------------------------
-# Meta prompt (defines the target-prompt space; nine required components)
+# Meta prompt (defines the target-prompt space; eleven required components)
 # ---------------------------------------------------------------------------
 
 META_PROMPT_TEMPLATE = """\
-You are an advanced prompt designer.
+You are an advanced prompt designer for clinical machine-learning applications.
 
 GOAL
 Generate a wide variety of TARGET PROMPTS. Each TARGET PROMPT must itself be a detailed instruction template
-of approximately 600-1200 words, containing all required components, and must include the literal placeholder {{FEATURES}}
-for per-sample feature insertion. These TARGET PROMPTS will later be used to generate comprehensive, fact-based narratives
-for survival analysis.
+of approximately 600-1200 words, containing all ELEVEN required components below, and must include two literal
+placeholders: {{BRIEFING}} for cohort background knowledge and {{FEATURES}} for per-sample feature insertion.
+When later filled with a cohort knowledge briefing and one patient's structured covariates, a TARGET PROMPT
+instructs an LLM to produce BOTH (a) a comprehensive, fact-based clinical narrative and (b) a structured block
+of numerical prognostic estimates. These outputs will be used as inputs to survival analysis models.
 
 INPUTS
 Dataset Description:
@@ -88,25 +161,51 @@ Dataset Description:
 Feature List:
 {feature_list}
 
-REQUIREMENTS (All Nine Components Must Appear in Each TARGET PROMPT; order/layout is flexible):
-1) Role Assignment - specify a professional role (e.g., clinician, oncologist, survival analysis expert, biostatistician, educator, guideline author).
+REQUIREMENTS (All Eleven Components Must Appear in Each TARGET PROMPT; order/layout is flexible):
+1) Role Assignment - specify a professional role with both clinical and analytical expertise
+   (e.g., oncologist specializing in prognosis, intensivist, biostatistician developing clinical models,
+   clinical research coordinator, guideline author). Prefer roles that emphasize evidence-based clinical
+   reasoning and population-level prognosis.
 2) Narrative Instruction - explicitly require a 600-800 word narrative; coherent, structured, clinically realistic.
 3) Content Requirements - require:
-- explanation of each feature (name/units/meaning),
-- a synthesized survival risk profile (low/intermediate/high),
-- qualitative declarations about survival probability,
-- discussion of how features influence survival probability,
-- linkage to survival concepts (risk stratification, proportional-risk intuition, staging, etc.),
-- Inject additional medically and scientifically supported knowledge as much as possible - bring in thresholds, clinical guidelines, known prognostic factors,
-    and plausible interactions beyond the raw features. These additional insights are expected to enhance the informativeness of the text
-    and improve the performance of survival analysis models.
-- State explicitly that all reasoning must be fact-based and verifiable.
-4) Constraints - forbid IDs, raw survival times, true observed outcomes; forbid speculation and off-topic content.
-5) Feature Placeholder - include the literal token {{FEATURES}} and instruct to use ONLY that block for per-sample values.
-6) Structure Variation - support Type A ({{FEATURES}} before), Type B ({{FEATURES}} after), Type C (brief integrated case + {{FEATURES}}),
-   Type D (alternate formats like JSON/table/vignette).
-7) Tone & Audience - professional, evidence-based, for clinical experts and/or ML models.
-8) Output Format (recommended) - return a JSON object with fields: "role", "structure", "template" (template contains {{FEATURES}}).
+- explanation of each feature (name/units/clinical meaning),
+- explicit prognostic REASONING that combines features: how this specific combination of values, including
+  interactions among features, maps to risk - referencing recognized thresholds, staging conventions,
+  clinical guidelines, and established prognostic factors from the published literature,
+- a synthesized survival risk profile (low/intermediate/high survival probability) with clear qualitative
+  declarations about survival probability,
+- linkage to survival-analysis concepts (risk stratification, proportional-risk intuition,
+  short-term versus long-term hazard),
+- patient-specificity: two patients with different features must yield visibly different narratives and
+  different numerical estimates; forbid generic cohort-average summaries,
+- all reasoning fact-based and verifiable; no speculation.
+4) Numerical Prognostic Output - require the response to END with exactly ONE JSON code block of the form:
+```json
+{{
+  "estimated_5yr_survival_prob": <float between 0.0 and 1.0>,
+  "estimated_2yr_event_risk": <float between 0.0 and 1.0>,
+  "confidence": <float between 0.0 and 1.0>
+}}
+```
+   The estimates must be consistent with the narrative's reasoning and specific to this patient's feature
+   combination - they must NOT default to cohort averages. The confidence value expresses how well this
+   feature combination is covered by established clinical knowledge (lower for unusual or conflicting
+   feature combinations).
+5) Cohort Briefing Placeholder - include the literal token {{BRIEFING}}, introduced as cohort background
+   knowledge, together with an explicit usage instruction: the briefing is BACKGROUND context to enrich
+   interpretation, not a substitute for patient-specific reasoning; the narrative and estimates must not
+   simply restate briefing-level averages.
+6) Constraints - forbid patient identifiers, raw survival times, true observed outcomes; forbid inventing
+   feature values not present in {{FEATURES}}; forbid off-topic content.
+7) Feature Placeholder - include the literal token {{FEATURES}} and instruct to use ONLY that block for
+   per-sample values.
+8) Structure Variation - support Type A ({{FEATURES}} before), Type B ({{FEATURES}} after),
+   Type C (brief integrated case + {{FEATURES}}), Type D (alternate formats like JSON/table/vignette).
+9) Tone & Audience - professional, evidence-based, for clinical experts and/or ML models.
+10) Output Contract - the narrative comes FIRST, the single JSON code block comes LAST, and nothing may
+    follow the JSON block.
+11) Target-Prompt Format - return a JSON object with fields: "role", "structure" (A|B|C|D),
+    "template" (the full text, containing the literal {{BRIEFING}} and {{FEATURES}}).
 
 FEW-SHOT EXAMPLES (good TARGET PROMPTS):
 {fewshot_json}
@@ -117,14 +216,14 @@ OUTPUT FORMAT (strict JSON):
     {{
     "role": "string",
     "structure": "A|B|C|D",
-    "template": "FULL TARGET PROMPT TEXT that contains the literal {{FEATURES}}"
+    "template": "FULL TARGET PROMPT TEXT that contains the literal {{BRIEFING}} and {{FEATURES}}"
     }}
 ]
 }}
 
 TASK
-Generate N diverse TARGET PROMPTS that satisfy all nine components, vary roles and structures (A/B/C/D),
-and keep {{FEATURES}} exactly literal. JSON only, no extra commentary.
+Generate N diverse TARGET PROMPTS that satisfy all eleven components, vary roles and structures (A/B/C/D),
+and keep {{BRIEFING}} and {{FEATURES}} exactly literal. JSON only, no extra commentary.
 """
 
 
@@ -137,7 +236,7 @@ def generate_target_prompts(dataset_description: str, feature_list: str,
     """Query the LLM with the meta prompt to obtain ``n`` candidate target prompts.
 
     The LLM returns 5 prompts per call, so ``ceil(n / 5)`` calls are made. Only
-    prompts that contain the literal ``{FEATURES}`` placeholder are kept.
+    prompts that contain both literal placeholders are kept.
     """
     fewshot_json = json.dumps(FEWSHOT_EXAMPLES, ensure_ascii=False, indent=2)
     meta_prompt = META_PROMPT_TEMPLATE.format(
@@ -161,17 +260,18 @@ def generate_target_prompts(dataset_description: str, feature_list: str,
         )
         data = json.loads(rsp.choices[0].message.content)
         for p in data.get("prompts", []):
-            if isinstance(p, dict) and "{FEATURES}" in p.get("template", ""):
+            tpl = p.get("template", "") if isinstance(p, dict) else ""
+            if "{FEATURES}" in tpl and "{BRIEFING}" in tpl:
                 target_prompts.append({
                     "role": p.get("role", ""),
                     "structure": p.get("structure", ""),
-                    "template": p.get("template", ""),
+                    "template": tpl,
                 })
     return target_prompts
 
 
 # ---------------------------------------------------------------------------
-# Rendering a patient's features and generating a narrative from a template
+# Rendering a patient's features and generating narrative + numerics
 # ---------------------------------------------------------------------------
 
 def render_features_block(
@@ -195,21 +295,116 @@ def render_features_block(
     raise ValueError("Unknown format")
 
 
-def fill_template(template_text: str, features_block: str) -> str:
+def fill_template(template_text: str, features_block: str,
+                  briefing: str = BRIEFING_EMPTY) -> str:
+    """Fill both literal placeholders.
+
+    Uses ``str.replace`` (not ``str.format``): v5 templates legitimately
+    contain JSON braces in the numeric-output contract, which ``format``
+    would choke on.
+    """
     if "{FEATURES}" not in template_text:
         raise ValueError("Template must contain the literal {FEATURES} placeholder.")
-    return template_text.format(FEATURES=features_block)
+    filled = template_text.replace("{FEATURES}", features_block)
+    # Older (v1) templates carry no briefing slot; fill it when present.
+    if "{BRIEFING}" in filled:
+        filled = filled.replace("{BRIEFING}", briefing or BRIEFING_EMPTY)
+    return filled
+
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+_BARE_JSON_RE = re.compile(r"\{[^{}]*\}\s*$", re.S)
+
+
+def parse_narrative_response(text: str, fields=None) -> Tuple[str, Optional[Dict[str, float]]]:
+    """Split a v5 response into (narrative, numerics dict or None).
+
+    The numerics are taken from the LAST fenced JSON block; if none is found,
+    a trailing bare JSON object is tried. Values are clamped to [0, 1]. The
+    narrative is the response with the numeric block removed.
+    """
+    m = None
+    for m in _JSON_FENCE_RE.finditer(text):
+        pass  # keep the last fenced block
+    raw = None
+    if m is not None:
+        raw = m.group(1)
+        narrative = (text[:m.start()] + text[m.end():]).strip()
+    else:
+        tail = _BARE_JSON_RE.search(text)
+        if tail is not None:
+            raw = tail.group(0)
+            narrative = text[:tail.start()].strip()
+        else:
+            narrative = text.strip()
+    if raw is None:
+        return narrative, None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return narrative, None
+    out: Dict[str, float] = {}
+    # ``fields`` lets a cohort ask for different horizons; results are always
+    # keyed back to the canonical NUMERIC_FIELDS slots so every downstream
+    # consumer (column names, loaders, ablations) is unaffected.
+    read = tuple(fields) if fields else NUMERIC_FIELDS
+    for f, src in zip(NUMERIC_FIELDS, read):
+        v = obj.get(src)
+        if v is None:
+            return narrative, None
+        try:
+            out[f] = min(1.0, max(0.0, float(v)))
+        except (TypeError, ValueError):
+            return narrative, None
+    return narrative, out
+
+
+def generate_narrative_and_numerics(
+    filled_prompt: str, model: str = "gpt-4o", temperature: float = 0.4,
+    retries: int = 1, api_retries: int = 4, fields=None,
+) -> Tuple[str, Optional[Dict[str, float]]]:
+    """One call producing the narrative and the numeric JSON block (v5).
+
+    Retries once if the numeric block cannot be parsed; on repeated failure
+    returns the narrative with ``None`` numerics (callers substitute the 0.5
+    defaults and log the patient). Transient API errors (rate limits,
+    timeouts) are retried with exponential backoff.
+    """
+    import random
+    import time as _t
+
+    client = _client()
+    last_narrative = ""
+    for _ in range(retries + 1):
+        rsp = None
+        for attempt in range(api_retries + 1):
+            try:
+                rsp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system",
+                         "content": "You generate fact-based clinical narratives with numerical prognostic "
+                                    "estimates, suitable for ML training. Follow the prompt's output contract "
+                                    "exactly: narrative first, then a single JSON code block, nothing after it. "
+                                    "Avoid unverifiable claims."},
+                        {"role": "user", "content": filled_prompt},
+                    ],
+                    temperature=temperature,
+                )
+                break
+            except Exception:
+                if attempt == api_retries:
+                    raise
+                _t.sleep(2.0 * (2 ** attempt) + random.uniform(0, 1))
+        narrative, numerics = parse_narrative_response(
+            rsp.choices[0].message.content.strip(), fields=fields)
+        last_narrative = narrative
+        if numerics is not None:
+            return narrative, numerics
+    return last_narrative, None
 
 
 def generate_narrative(filled_prompt: str, model: str = "gpt-4o") -> str:
-    client = _client()
-    rsp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system",
-             "content": "You generate fact-based clinical narratives suitable for ML training. Keep 600-800 words and avoid unverifiable claims."},
-            {"role": "user", "content": filled_prompt},
-        ],
-        temperature=0.4,
-    )
-    return rsp.choices[0].message.content.strip()
+    """Narrative-only helper kept for backward compatibility (v1 pipeline)."""
+    narrative, _ = generate_narrative_and_numerics(filled_prompt, model=model, temperature=0.4)
+    return narrative

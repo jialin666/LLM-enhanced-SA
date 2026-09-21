@@ -25,12 +25,23 @@ def ipcw_cindex(
     test_time: np.ndarray,
     test_event: np.ndarray,
     test_risk: np.ndarray,
+    tau: float = None,
 ) -> float:
     """Uno's IPCW concordance.
 
     `test_risk` is a per-sample scalar; higher = more risk = shorter survival.
     Training time/event are needed so the IPCW estimator can fit the censoring
     distribution from the training fold (avoids test-leakage).
+
+    ``tau`` is Uno's truncation time: only pairs whose earlier time is below
+    ``tau`` are compared, and the censoring survival function must be bounded
+    away from zero at ``tau``. Without it (``tau=None``, the as-submitted
+    behaviour) the statistic can be dominated by one or two pairs whenever the
+    training-fold censoring distribution reaches ~0 at its last follow-up
+    time, which happens on small cohorts with long, sparse tails (observed on
+    2,000-patient TCGA draws: IPCW C of 0.27 or 0.90 on a split whose Harrell
+    C is 0.77 for every base learner). Pass the evaluation time-grid maximum
+    to share the IBS horizon.
 
     sksurv refuses to score when a test EVENT time exceeds max(train_time)
     (the IPCW weight is undefined past that point). We clip such test rows out
@@ -57,7 +68,11 @@ def ipcw_cindex(
 
     y_train = _y_structured(train_time, train_event)
     y_test = _y_structured(test_time, test_event)
-    c, *_ = concordance_index_ipcw(y_train, y_test, test_risk)
+    if tau is not None:
+        tau = float(min(tau, train_tmax - eps))
+        c, *_ = concordance_index_ipcw(y_train, y_test, test_risk, tau=tau)
+    else:
+        c, *_ = concordance_index_ipcw(y_train, y_test, test_risk)
     return float(c)
 
 

@@ -48,15 +48,23 @@ llmsa/                     # survival method
   baselines.py             #   CoxPH / RSF / DeepSurv / DeepHit / CoxTime
   model.py                 #   LLM-SA stacking ensemble + simplex meta-learner
   eval.py                  #   multi-seed evaluation harness
-  train_eval.py            #   run LLM-SA across the three cohorts
-  run_baselines.py         #   run the structured-covariate baselines
+  train_eval.py            #   run LLM-SA across cohorts
+  run_baselines.py         #   run the structured-covariate baselines (fixed configuration)
+  tune_baselines.py        #   per-cohort hyperparameter search for the baselines (Appendix E)
+  run_tuned_baselines.py   #   evaluate the selected baseline configurations on all 30 splits
+  run_ablation.py          #   component ablation A-D (Table 2, Sec 4.4)
+  run_zeroshot.py          #   LLM estimate as a training-free risk score (Sec 4.4)
+  run_traintest_gap.py     #   train-fold vs test-fold C-index of the ablation cells (Appendix D)
+  run_lambda_sweep.py      #   sensitivity to the meta-learner prior strength
+  tune_llmsa.py            #   the baseline tuning protocol applied to LLM-SA (check only)
 
-text_generation/           # automatic textual representation learning (Sec 2.2)
+text_generation/           # automatic textual representation learning (manuscript Sec 3.2)
   cohorts.py               #   per-cohort descriptions, feature lists, briefings
   meta_prompt.py           #   meta prompt -> candidate target prompts
   score.py                 #   ordinal narrative grading (phi: +1 / 0 / -1)
   select_prompt.py         #   KM reference labels -> grade candidates -> P*
   generate_features.py     #   apply P* -> narratives Z_i, numerics N_i, embeddings E_i
+  plot_label_construction.py #  Appendix B figure (reference-label construction)
 
 prompts/                   # released candidate target prompts, per cohort
 docs/METHOD.md             # method write-up
@@ -87,52 +95,152 @@ pip install -r requirements.txt
 export OPENAI_API_KEY=sk-...        # required only for text_generation/
 ```
 
-Datasets (GBSG, METABRIC, SUPPORT) are expected under `data/` and are not
-tracked in git. Set `LLMSA_REPO_ROOT` if `data/` lives elsewhere.
+The seven cohorts of the paper are expected under `data/` and are not tracked
+in git (all are public; see `llmsa/data.py` for the expected file names):
+GBSG, METABRIC, SUPPORT (the full 9,105-patient cohort), FLCHAIN, TCGA
+(pan-cancer clinical data resource; the 2,000-patient subsample is drawn by the
+loader), the UCI Heart Failure Clinical Records, and the Wisconsin Prognostic
+Breast Cancer (WPBC) cohort. Set `LLMSA_REPO_ROOT` if `data/` lives elsewhere.
+
+The per-patient LLM outputs used for every reported result (narratives,
+numeric estimates and embeddings) are released as a GitHub Release asset; see
+**Released LLM outputs** below. With them in place, every number in the paper
+can be reproduced without an OpenAI key.
 
 ---
 
 ## Usage
 
+### The v5 unified pipeline
+
+Each target prompt carries two literal placeholders — `{BRIEFING}` (cohort
+background knowledge) and `{FEATURES}` (one patient's covariates) — and
+instructs the LLM to return, in **one call**, the clinical narrative followed
+by a single JSON block with the numeric prognostic estimates
+(`estimated_5yr_survival_prob`, `estimated_2yr_event_risk`, `confidence`).
+
+Prompt selection is leakage-controlled: the Kaplan–Meier fit, the tertile
+cut-points, and the graded patient subset are all restricted to a fixed
+**development hold-out** (15%, event-stratified, `llmsa.data.dev_holdout_positions`)
+that the evaluation loaders pin to the training fold of every per-seed split,
+so no validation or test outcome can influence the selected prompt.
+
+The cohort briefing comes in three arms (`--briefing`):
+
+| arm | content | artifact tag |
+|---|---|---|
+| `sanitized` (default) | a fixed description of the cohort and its covariates; **no cohort-matched outcome statistics** (Appendix E of the paper) | `v5` |
+| `legacy` | the as-submitted briefing incl. published cohort outcome figures; kept only so the submitted run can be reproduced, used in **no** reported result | `v5legacy` |
+| `none` | empty slot (the no-briefing run reported in the response to reviewers) | `v5nobrief` |
+
+`--tag-suffix` appends a string to the artifact tag; the reported results use
+the tag `v5fixmini` (sanitized briefing, `gpt-4o-mini`) for the six larger
+cohorts and `v5` for Heart Failure and WPBC.
+
 **1. Select the optimal target prompt P\*** for a cohort (meta prompt →
-candidate generation → KM-ordinal grading → selection):
+candidate generation → KM-ordinal grading on the development hold-out →
+selection):
 
 ```bash
-python -m text_generation.select_prompt --dataset gbsg
+python -m text_generation.select_prompt --dataset gbsg              # gpt-4o for grading (GBSG, METABRIC, SUPPORT)
+python -m text_generation.select_prompt --dataset flchain --narrative-model gpt-4o-mini --grader-model gpt-4o-mini
+# variants:
+#   --events-only          restrict graded labels to observed events
+#   --briefing legacy|none briefing arm used during grading
+#   --legacy-full-cohort   as-submitted behaviour (leaks; comparison only)
 ```
 
-This writes the candidate prompts to `prompts/gbsg_target_prompts.json` and
-their grades to `prompts/gbsg_templates_grades.json`. The released candidate
-prompts are already in `prompts/`; the grades are a per-run artefact (LLM
-outputs vary between runs) and are not tracked in git.
+This writes the candidate prompts to `prompts/gbsg_target_prompts.json`, their
+grades to `prompts/gbsg_templates_grades.json`, and a secondary
+numeric-agreement score to `prompts/gbsg_numeric_grades.json`. Grades are a
+per-run artefact (LLM outputs vary between runs) and are not tracked in git.
 
-**2. Generate per-patient features** with the selected prompt (narratives Z_i,
-numerics N_i, embeddings E_i):
+**2. Generate per-patient features** with the selected prompt (one call per
+patient: narrative Z_i + numerics N_i; then embeddings E_i):
 
 ```bash
-python -m text_generation.generate_features --dataset gbsg
+# as reported (six larger cohorts; SUPPORT on the full 9,105 patients):
+python -m text_generation.generate_features --dataset gbsg --model gpt-4o-mini --tag-suffix fixmini
+python -m text_generation.generate_features --dataset support --model gpt-4o-mini --tag-suffix fixmini --full-support
+# Heart Failure / WPBC (tag v5):
+python -m text_generation.generate_features --dataset heartfailure --model gpt-4o-mini
+# no-briefing arm:
+python -m text_generation.generate_features --dataset gbsg --model gpt-4o-mini --briefing none
 ```
+
+Generation uses temperature 0.4 and one call per patient; the outputs behind
+the paper were generated on 8-11 September 2026.
 
 By default this uses the highest-graded prompt P\* from step 1. To skip grading
 and use a specific candidate directly, pass its id:
 `--prompt-id <id>` (ids are the keys in `prompts/gbsg_target_prompts.json`).
 
-This writes `data/v4_structured_gbsg.csv` and `data/embeddings_v4_gbsg.npy`.
+This writes `data/<tag>_structured_gbsg.csv`, `data/embeddings_<tag>_gbsg.npy`
+and the narratives under `data/<tag>/narratives/gbsg/` (tag = `v5`, `v5fixmini`,
+`v5nobrief`, ...). Loaders select a generation via
+`load_dataset_v4(..., feature_version=<tag>)`.
 
-**3. Train and evaluate LLM-SA** across the three cohorts (10 seeds):
+**3. Table 2: LLM-SA and the component ablation** (30 splits, seeds 0-29;
+cells A = covariates only, B = + numeric estimates, C = + narrative embedding,
+D = full framework; `--cindex-tau grid` truncates Uno's C-index at the horizon
+of the integrated Brier score, as in the paper):
 
 ```bash
-python -m llmsa.train_eval --seeds 10 --datasets metabric,gbsg,support --lam 0.3
+python -m llmsa.run_ablation --seeds 30 --datasets metabric,gbsg,support,flchain,tcga,tcgafull \
+    --feature-version v5fixmini --full-support --cindex-tau grid
+python -m llmsa.run_ablation --seeds 30 --datasets heartfailure,wpbc --feature-version v5 --cindex-tau grid
 ```
 
-**Baselines**:
+The meta-learner prior strength defaults to `--lam 1.0`, the value used for
+every reported result. `llmsa.train_eval` runs the full framework alone with
+the same flags.
+
+**Baselines** (tuned per cohort on the validation fold, then evaluated on the
+same 30 splits; grids in Appendix E of the paper):
 
 ```bash
-python -m llmsa.run_baselines --seeds 10 --models coxph,rsf,deepsurv,deephit,coxtime
+python -m llmsa.tune_baselines --datasets metabric,gbsg,support,flchain,tcga,tcgafull \
+    --models coxph,rsf,deepsurv,deephit,coxtime --tune-seeds 5 --seeds 30 --full-support
+python -m llmsa.tune_baselines --datasets heartfailure,wpbc --tune-seeds 20 --seeds 30
+python -m llmsa.run_tuned_baselines --logs <tuning log> --datasets metabric,gbsg --seeds 30 --full-support --cindex-tau grid
+```
+
+`llmsa.run_baselines` runs the fixed (untuned) configuration of the submitted
+version and is kept for comparison only.
+
+**Further analyses** reported in Sec 4.4 and the appendices:
+
+```bash
+python -m llmsa.run_zeroshot --datasets gbsg,metabric,flchain,support --feature-version v5fixmini --full-support
+python -m llmsa.run_traintest_gap --datasets gbsg,metabric,flchain,support --feature-version v5fixmini --full-support
+python -m llmsa.run_ablation --datasets tcgafull --feature-version v5fixmini --cindex-tau grid --train-n 300   # learning curve
+python -m llmsa.run_ablation --datasets tcgafull --feature-version v5fixmini --cindex-tau grid --cohort-n 2000 --cohort-seed 1   # random 2,000-patient cohorts
+python -m llmsa.run_lambda_sweep --dataset tcgafull --feature-version v5fixmini
+python -m text_generation.plot_label_construction --outdir figures
 ```
 
 Both C-index and IBS are reported under Uno's IPCW estimator so every model is
 scored under identical definitions.
+
+### SUPPORT sample size
+
+Every reported experiment uses the full 9,105-patient SUPPORT cohort
+(`--full-support`). The loader's default 1,500-patient event-stratified
+subsample was a development-time convenience and is not used in the paper.
+
+---
+
+## Released LLM outputs
+
+The per-patient outputs behind every reported number are published as the
+release asset `llmsa-llm-outputs.tar.gz` on the GitHub Releases page of this
+repository. Unpack it into `data/`; it contains, for each cohort, the
+structured numeric estimates (`data/<tag>_structured_<cohort>.csv`), the
+narrative embeddings (`data/embeddings_<tag>_<cohort>.npy`) and the raw
+narratives with the parsed JSON (`data/<tag>/narratives/<cohort>/`), for the
+reported arm (`v5fixmini`, or `v5` for Heart Failure and WPBC) and for the
+no-briefing arm (`v5nobrief` / `v5nobriefmini`). The full text of every cohort
+briefing is in `text_generation/cohorts.py`.
 
 ---
 

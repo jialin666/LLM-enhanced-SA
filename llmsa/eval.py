@@ -70,19 +70,36 @@ def evaluate_model_on_dataset(
     verbose: bool = True,
     use_v4: bool = False,
     full_support: bool = False,
+    dev_holdout: bool = True,
+    feature_version: str = "v4",
+    use_numerics: bool = True,
+    train_subsample_n: int = None,
+    cohort_subsample: tuple = None,
+    cindex_tau: str = "none",
 ) -> DatasetResult:
     """Fit-evaluate ``model_factory(seed)`` on ``dataset_name`` for each seed.
 
     ``use_v4=True`` loads the LLM-augmented bundle (covariates + N_i + narrative
     embedding); otherwise the structured-only bundle is used (for baselines).
+    ``feature_version`` selects which generation of LLM features to load
+    ("v4", "v5", "v5legacy", "v5nobrief").
+    ``dev_holdout=True`` (default) pins the prompt-selection development rows
+    to the training fold; pass ``False`` to reproduce the legacy splits.
     """
     seeds = list(seeds)
     out = DatasetResult(dataset=dataset_name)
     for seed in seeds:
         if use_v4:
-            bundle = load_dataset_v4(dataset_name, seed=seed, full_support=full_support)
+            bundle = load_dataset_v4(dataset_name, seed=seed, full_support=full_support,
+                                     dev_holdout=dev_holdout,
+                                     feature_version=feature_version,
+                                     use_numerics=use_numerics,
+                                     train_subsample_n=train_subsample_n,
+                                     cohort_subsample=cohort_subsample)
         else:
-            bundle = load_dataset(dataset_name, seed=seed)
+            bundle = load_dataset(dataset_name, seed=seed, dev_holdout=dev_holdout,
+                                  full_support=full_support,
+                                  cohort_subsample=cohort_subsample)
         t0 = _time.time()
         note = ""
         try:
@@ -98,9 +115,12 @@ def evaluate_model_on_dataset(
                 raise ValueError(f"bad surv shape {surv.shape}")
             if surv.shape[1] != len(grid):
                 raise ValueError(f"surv has {surv.shape[1]} cols but grid has {len(grid)}")
+            # ``cindex_tau="grid"``: Uno's C truncated at the evaluation grid
+            # maximum (the IBS horizon); "none" reproduces the as-submitted metric.
+            _tau = float(np.max(grid)) if cindex_tau == "grid" else None
             c = ipcw_cindex(
                 bundle.train.time, bundle.train.event,
-                bundle.test.time, bundle.test.event, risk,
+                bundle.test.time, bundle.test.event, risk, tau=_tau,
             )
             b = ipcw_ibs(
                 bundle.train.time, bundle.train.event,

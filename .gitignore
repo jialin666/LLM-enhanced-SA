@@ -34,6 +34,11 @@ data/
 *.json
 !prompts/*.json
 prompts/*_templates_grades.json
+prompts/*_numeric_grades.json
+
+# Model checkpoints written by pycox during training
+*.pt
+weight_checkpoint_*
 
 # Environment
 .env
