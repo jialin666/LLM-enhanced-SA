@@ -232,8 +232,17 @@ subsample was a development-time convenience and is not used in the paper.
 ## Released LLM outputs
 
 The per-patient outputs behind every reported number are published as the
-release asset `llmsa-llm-outputs.tar.gz` on the GitHub Releases page of this
-repository. Unpack it into `data/`; it contains, for each cohort, the
+release asset `llmsa-llm-outputs.tar.gz` (280 MB) of release **v1.1**:
+<https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.1/llmsa-llm-outputs.tar.gz>
+(release page: <https://github.com/jialin666/LLM-enhanced-SA/releases/tag/v1.1>).
+
+```bash
+curl -L -o llmsa-llm-outputs.tar.gz \
+  https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.1/llmsa-llm-outputs.tar.gz
+tar -xzf llmsa-llm-outputs.tar.gz          # unpacks into data/
+```
+
+The archive contains, for each cohort, the
 structured numeric estimates (`data/<tag>_structured_<cohort>.csv`), the
 narrative embeddings (`data/embeddings_<tag>_<cohort>.npy`) and the raw
 narratives with the parsed JSON (`data/<tag>/narratives/<cohort>/`), for the
