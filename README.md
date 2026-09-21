@@ -130,7 +130,7 @@ The cohort briefing comes in two arms (`--briefing`):
 | arm | content | artifact tag |
 |---|---|---|
 | `sanitized` (default) | a fixed description of the cohort and its covariates; **no cohort-matched outcome statistics** (Appendix E of the paper) | `v5` |
-| `none` | empty slot (the no-briefing run reported in the response to reviewers) | `v5nobrief` |
+| `none` | empty slot (no-briefing run) | `v5nobrief` |
 
 `--tag-suffix` appends a string to the artifact tag; the reported results use
 the tag `v5fixmini` (sanitized briefing, `gpt-4o-mini`) for the six larger
