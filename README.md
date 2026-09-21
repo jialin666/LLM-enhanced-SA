@@ -125,12 +125,11 @@ cut-points, and the graded patient subset are all restricted to a fixed
 that the evaluation loaders pin to the training fold of every per-seed split,
 so no validation or test outcome can influence the selected prompt.
 
-The cohort briefing comes in three arms (`--briefing`):
+The cohort briefing comes in two arms (`--briefing`):
 
 | arm | content | artifact tag |
 |---|---|---|
 | `sanitized` (default) | a fixed description of the cohort and its covariates; **no cohort-matched outcome statistics** (Appendix E of the paper) | `v5` |
-| `legacy` | the as-submitted briefing incl. published cohort outcome figures; kept only so the submitted run can be reproduced, used in **no** reported result | `v5legacy` |
 | `none` | empty slot (the no-briefing run reported in the response to reviewers) | `v5nobrief` |
 
 `--tag-suffix` appends a string to the artifact tag; the reported results use
@@ -146,7 +145,7 @@ python -m text_generation.select_prompt --dataset gbsg              # gpt-4o for
 python -m text_generation.select_prompt --dataset flchain --narrative-model gpt-4o-mini --grader-model gpt-4o-mini
 # variants:
 #   --events-only          restrict graded labels to observed events
-#   --briefing legacy|none briefing arm used during grading
+#   --briefing none        grade with an empty briefing slot
 #   --legacy-full-cohort   as-submitted behaviour (leaks; comparison only)
 ```
 

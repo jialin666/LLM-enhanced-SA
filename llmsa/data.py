@@ -150,7 +150,7 @@ DEV_HOLDOUT_FRAC = 0.15
 DEV_HOLDOUT_SEED = 20260903
 
 # The three LLM numeric prognostic fields appended to the structured covariates.
-# Feature files are versioned (v4, v5, v5legacy, v5nobrief); column names carry
+# Feature files are versioned (v4, v5, v5nobrief, ...); column names carry
 # the version suffix: llm_5yr_surv_<version>, etc.
 def _num_cols_for_version(version: str):
     return tuple(f"llm_{s}_{version}" for s in ("5yr_surv", "2yr_event_risk", "confidence"))
@@ -483,7 +483,7 @@ def load_dataset_v4(name: str, seed: int, full_support: bool = False,
       embeddings ``E_i``, in the same patient order as the structured CSV.
 
     ``feature_version`` selects the generation: ``v4`` (as-published two-call
-    pipeline) or the unified v5 arms (``v5``, ``v5legacy``, ``v5nobrief``).
+    pipeline) or the unified v5 arms (``v5``, ``v5nobrief``, tag suffixes such as ``v5fixmini``).
 
     The numerics are concatenated to the standardized covariates; the embedding
     is attached to each split for the DeepSurv base learner.

@@ -28,8 +28,7 @@ class Cohort:
     description: str
     feature_list: str
     feature_cols: List[str]
-    briefing: str                 # sanitized briefing (default for v5 generation)
-    briefing_legacy: str = ""     # v4 briefing incl. cohort outcome rates (comparison arm only)
+    briefing: str                 # fixed cohort briefing without outcome statistics
     # candidate-prompt search settings (manuscript defaults)
     n_candidates: int = 50
     n_eval_samples: int = 100
@@ -64,15 +63,12 @@ class Cohort:
 # -----------------------------------------------------------------------------
 # Knowledge briefings
 #
-# _BRIEFINGS (default, "sanitized"): general clinical prognostic knowledge --
-# established risk factors, guideline thresholds, meta-analytic effect
-# directions -- WITHOUT outcome rates published for these specific cohorts.
-# This is the v5 default, addressing the concern that cohort-matched outcome
-# figures leak the datasets' own outcome distributions into the LLM inputs.
-#
-# _BRIEFINGS_LEGACY: the v4 briefings, which include published outcome figures
-# for these same cohorts. Kept verbatim for the with-legacy-briefing
-# comparison arm and for disclosure in the manuscript appendix.
+# _BRIEFINGS: a fixed description of each cohort's clinical setting and
+# covariates -- established risk factors, guideline thresholds and the
+# direction of known effects -- WITHOUT any survival percentage, hazard ratio,
+# median follow-up or other outcome statistic of the cohort itself. The
+# criterion is deployability: each briefing could be written for a newly
+# opened cohort before any outcome has accrued (manuscript Appendix E).
 # -----------------------------------------------------------------------------
 
 _BRIEFINGS = {
@@ -131,38 +127,6 @@ _BRIEFINGS = {
         "- The number of comorbidities adds approximately linearly to mortality risk.\n"
         "- Hypoalbuminaemia (serum albumin below ~2.5 g/dL) is a marker of advanced systemic "
         "  illness and poor prognosis."
-    ),
-}
-
-_BRIEFINGS_LEGACY = {
-    "gbsg": (
-        "Cohort context (node-positive breast cancer, GBSG-style cohorts, "
-        "use as background knowledge):\n"
-        "- EBCTCG meta-analyses: each additional positive lymph node adds "
-        "  HR ~1.05; tumour size >20mm HR ~1.2; grade 3 vs grade 1 HR ~1.8.\n"
-        "- Adjuvant tamoxifen halves the annual recurrence rate in ER+ disease.\n"
-        "- Median follow-up in GBSG ~5 years; 5-year recurrence-free survival "
-        "  ~60-70% overall, varying strongly by nodal burden and grade.\n"
-        "- PGR >50 fmol/L is a favourable prognostic marker independent of ER."
-    ),
-    "metabric": (
-        "Cohort context (METABRIC invasive breast cancer, use as background knowledge):\n"
-        "- PAM50 intrinsic subtypes: Luminal A (best prognosis, ~85-90% 10-yr BCSS); "
-        "  Luminal B (moderate, ~70% 10-yr BCSS); HER2-enriched and Basal-like "
-        "  (poorer, ~50-60% 10-yr BCSS).\n"
-        "- MKI67 proliferation index distinguishes Luminal A (low) from Luminal B (high).\n"
-        "- ERBB2 amplification predicts response to HER2-targeted therapy with "
-        "  ~60% response rate when combined with chemotherapy.\n"
-        "- ER-positivity confers responsiveness to endocrine therapy (~50-70% benefit)."
-    ),
-    "support": (
-        "Cohort context (SUPPORT study of critically ill adults, use as background knowledge):\n"
-        "- Baseline mortality varies sharply by disease class: ARF/MOSF ~50% 6-mo "
-        "  mortality; COPD/CHF/Cirrhosis ~40%; Cancer ~70%; Coma ~80%.\n"
-        "- APACHE-II / SOFA components: elevated creatinine, bilirubin, low mean "
-        "  arterial pressure, low PaO2/FiO2 ratio are strongly prognostic.\n"
-        "- Number of comorbidities adds linearly to mortality risk.\n"
-        "- Serum albumin <2.5 g/dL is a marker of advanced systemic illness."
     ),
 }
 
@@ -258,14 +222,14 @@ COHORTS = {
     "gbsg": Cohort(
         name="gbsg", description=_GBSG_DESC, feature_list=_GBSG_FEATS,
         feature_cols=["age", "meno", "size", "grade", "nodes", "pgr", "er", "hormon"],
-        briefing=_BRIEFINGS["gbsg"], briefing_legacy=_BRIEFINGS_LEGACY["gbsg"],
+        briefing=_BRIEFINGS["gbsg"],
         _cat=list(GBSG_CAT), _num=list(GBSG_NUM),
     ),
     "metabric": Cohort(
         name="metabric", description=_METABRIC_DESC, feature_list=_METABRIC_FEATS,
         feature_cols=["MKI67", "EGFR", "PGR", "ERBB2", "hormone_treatment",
                       "radiotherapy", "chemotherapy", "ER_positive", "age"],
-        briefing=_BRIEFINGS["metabric"], briefing_legacy=_BRIEFINGS_LEGACY["metabric"],
+        briefing=_BRIEFINGS["metabric"],
         _cat=list(METABRIC_CAT), _num=list(METABRIC_NUM),
     ),
     "flchain": Cohort(
@@ -280,7 +244,7 @@ COHORTS = {
         name="support", description=_SUPPORT_DESC, feature_list=_SUPPORT_FEATS,
         feature_cols=["sex", "dzclass", "age", "num.co", "meanbp", "wblc", "hrt",
                       "resp", "temp", "pafi", "alb", "bili", "crea", "sod"],
-        briefing=_BRIEFINGS["support"], briefing_legacy=_BRIEFINGS_LEGACY["support"],
+        briefing=_BRIEFINGS["support"],
         _cat=list(SUPPORT_CAT), _num=list(SUPPORT_NUM),
     ),
 }
@@ -362,7 +326,7 @@ COHORTS["rotterdam"] = Cohort(
     name="rotterdam", description=_ROTTERDAM_DESC, feature_list=_ROTTERDAM_FEATS,
     feature_cols=["age", "meno", "size_raw", "grade_raw", "nodes", "pgr", "er", "hormon"],
     feature_labels={"size_raw": "size", "grade_raw": "grade"},
-    briefing=_BRIEFINGS["gbsg"], briefing_legacy=_BRIEFINGS_LEGACY["gbsg"],
+    briefing=_BRIEFINGS["gbsg"],
     _cat=list(ROTTERDAM_CAT), _num=list(ROTTERDAM_NUM),
 )
 

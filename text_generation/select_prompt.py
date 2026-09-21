@@ -94,8 +94,6 @@ def _valid_templates(all_templates):
 def _select_briefing(cohort, briefing_mode: str) -> str:
     if briefing_mode == "sanitized":
         return cohort.briefing
-    if briefing_mode == "legacy":
-        return cohort.briefing_legacy
     if briefing_mode == "none":
         return BRIEFING_EMPTY
     raise ValueError(f"unknown briefing mode: {briefing_mode!r}")
@@ -289,10 +287,9 @@ if __name__ == "__main__":
                    help="reproduce the as-submitted behaviour (KM and grading "
                         "subset drawn from the full cohort); leaks test outcomes "
                         "into prompt selection -- for comparison only")
-    p.add_argument("--briefing", choices=["sanitized", "legacy", "none"], default="sanitized",
+    p.add_argument("--briefing", choices=["sanitized", "none"], default="sanitized",
                    help="cohort briefing filled into {BRIEFING} during grading: "
-                        "'sanitized' (default; no cohort-matched outcome rates), "
-                        "'legacy' (v4 text incl. published cohort figures), "
+                        "'sanitized' (default; no cohort-matched outcome statistics), "
                         "'none' (empty slot)")
     p.add_argument("--workers", type=int, default=8,
                    help="concurrent grading calls per candidate (thread pool)")

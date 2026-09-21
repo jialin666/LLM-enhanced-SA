@@ -14,10 +14,8 @@ The narrative is then embedded:  E_i = EMB(Z_i) in R^1536.
 The cohort briefing filled into the template's ``{BRIEFING}`` slot is selected
 with ``--briefing``:
 
-    sanitized  (default) general clinical prognostic knowledge, no
-               cohort-matched outcome rates            -> tag ``v5``
-    legacy     the v4 briefing incl. published cohort outcome figures
-               (comparison arm)                        -> tag ``v5legacy``
+    sanitized  (default) the fixed cohort briefing, no
+               cohort-matched outcome statistics       -> tag ``v5``
     none       empty slot (no-briefing ablation)       -> tag ``v5nobrief``
 
 Outputs (under data/, consumed by ``llmsa.data.load_dataset_v4(...,
@@ -56,7 +54,7 @@ from .meta_prompt import (
 
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
 
-_BRIEFING_TAGS = {"sanitized": "v5", "legacy": "v5legacy", "none": "v5nobrief"}
+_BRIEFING_TAGS = {"sanitized": "v5", "none": "v5nobrief"}
 
 
 def _client() -> OpenAI:
@@ -140,8 +138,6 @@ def generate_for_dataset(dataset: str, model="gpt-4o",
     template = _load_selected_prompt(dataset, prompt_id=prompt_id)
     if briefing_mode == "sanitized":
         briefing = cohort.briefing
-    elif briefing_mode == "legacy":
-        briefing = cohort.briefing_legacy
     elif briefing_mode == "none":
         briefing = BRIEFING_EMPTY
     else:
@@ -291,7 +287,7 @@ if __name__ == "__main__":
                         "select_prompt run (P*) is used")
     p.add_argument("--briefing", choices=list(_BRIEFING_TAGS), default="sanitized",
                    help="briefing filled into {BRIEFING}: sanitized (default, tag v5), "
-                        "legacy (v4 text, tag v5legacy), none (tag v5nobrief)")
+                        "none (tag v5nobrief)")
     p.add_argument("--workers", type=int, default=8,
                    help="concurrent generation calls (thread pool)")
     p.add_argument("--full-support", action="store_true",
