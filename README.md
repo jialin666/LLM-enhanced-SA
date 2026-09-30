@@ -5,9 +5,10 @@ clinical covariates with LLM-derived numerical prognostic estimates and
 patient-specific clinical narrative embeddings, and integrates them through a
 heterogeneous stacking ensemble of survival learners.
 
-> **LLM-Enhanced Survival Analysis**
-> [Author Names] · [Venue, Year]
-> [[Paper]](#)
+> **Large Language Models-Enhanced Survival Analysis**
+> Jialin Hua, Thierry Chekouo, Xuewen Lu, Hua Shen, Jingjing Wu
+> Under review at the *Journal of Biomedical Informatics* (revised manuscript submitted September 2026).
+> The code and released LLM outputs of version 1.1 correspond to the revised manuscript.
 
 ---
 
