@@ -19,29 +19,24 @@ from .eval import evaluate_model_on_dataset, format_summary_block
 from .model import LLMSAStacking, TrainConfig
 
 
+# Settings of cohorts registered at run time: name -> dict(text_pca_dim=..., batch_size=...).
+EXTRA_CFG: dict = {}
+
+
 def per_cohort_cfg(lam: float):
     """Per-cohort hyperparameters (model family is fixed across datasets)."""
-    return {
+    cfg = {
         "metabric": TrainConfig(text_pca_dim=64,  batch_size=128, meta_prior_lam=lam),
         "gbsg":     TrainConfig(text_pca_dim=256, batch_size=64,  meta_prior_lam=lam),
         "support":  TrainConfig(text_pca_dim=64,  batch_size=128, meta_prior_lam=lam),
         "flchain":  TrainConfig(text_pca_dim=64,  batch_size=128, meta_prior_lam=lam),
-        "rotterdam": TrainConfig(text_pca_dim=64, batch_size=128, meta_prior_lam=lam),
         "tcga":     TrainConfig(text_pca_dim=64,  batch_size=128, meta_prior_lam=lam),
         "tcgafull": TrainConfig(text_pca_dim=64,  batch_size=128, meta_prior_lam=lam),
         "heartfailure": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
         "wpbc":     TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "veteran": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "lung": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "whas500": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "larynx": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "aids": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "brcamicro": TrainConfig(text_pca_dim=32, batch_size=32, meta_prior_lam=lam),
-        "gbsg3":    TrainConfig(text_pca_dim=64,  batch_size=64,  meta_prior_lam=lam),
-        "gbsg5":    TrainConfig(text_pca_dim=64,  batch_size=64,  meta_prior_lam=lam),
-        "metabric3": TrainConfig(text_pca_dim=64, batch_size=128, meta_prior_lam=lam),
-        "metabric5": TrainConfig(text_pca_dim=64, batch_size=128, meta_prior_lam=lam),
     }
+    cfg.update({k: TrainConfig(meta_prior_lam=lam, **v) for k, v in EXTRA_CFG.items()})
+    return cfg
 
 
 def main(seeds, datasets, lam, full_support, feature_version="v4", dev_holdout=True):
@@ -80,7 +75,7 @@ if __name__ == "__main__":
     p.add_argument("--feature-version", default="v4",
                    help="artefact tag of the LLM features to load, e.g. v4, v5, v5nobrief, or a --tag-suffix variant such as v5mini")
     p.add_argument("--legacy-splits", action="store_true",
-                   help="reproduce the as-submitted splits (no dev holdout pinning)")
+                   help="reproduce the pre-v1.1 splits (no dev holdout pinning)")
     args = p.parse_args()
     main(seeds=list(range(args.seeds)), datasets=args.datasets.split(","),
          lam=args.lam, full_support=args.full_support,

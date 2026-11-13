@@ -35,8 +35,8 @@ def ipcw_cindex(
 
     ``tau`` is Uno's truncation time: only pairs whose earlier time is below
     ``tau`` are compared, and the censoring survival function must be bounded
-    away from zero at ``tau``. Without it (``tau=None``, the as-submitted
-    behaviour) the statistic can be dominated by one or two pairs whenever the
+    away from zero at ``tau``. Without it (``tau=None``, the
+    default) the statistic can be dominated by one or two pairs whenever the
     training-fold censoring distribution reaches ~0 at its last follow-up
     time, which happens on small cohorts with long, sparse tails (observed on
     2,000-patient TCGA draws: IPCW C of 0.27 or 0.90 on a split whose Harrell

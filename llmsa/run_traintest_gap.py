@@ -1,13 +1,13 @@
-"""Train-vs-test performance gap (reviewer request R1-6).
+"""Train-vs-test performance gap.
 
-R1-6 asks for stronger evidence that the reported gains are not overfitting,
-given modest cohort sizes and a high-dimensional narrative embedding. This
-script fits each ablation cell and reports the IPCW C-index on the TRAINING
-fold and on the TEST fold for the same fitted model, so the optimism gap
+Checks whether the reported gains reflect overfitting, given modest cohort
+sizes and a high-dimensional narrative embedding. This script fits each
+ablation cell and reports the IPCW C-index on the TRAINING fold and on the TEST
+fold for the same fitted model, so the optimism gap
 (train - test) can be compared across cells:
 
     A = covariates only            (no LLM inputs)
-    C = covariates + embedding     (the high-dimensional channel R1-6 worries about)
+    C = covariates + embedding     (the high-dimensional channel)
     D = covariates + numerics + embedding
 
 A larger gap for C/D than for A would indicate the embedding induces

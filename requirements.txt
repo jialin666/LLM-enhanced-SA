@@ -18,3 +18,6 @@ scikit-learn>=1.3.0
 
 # LLM / OpenAI (text generation + embeddings)
 openai>=1.0.0
+
+# Statistical re-analysis (analysis/corrected_stats.py)
+statsmodels>=0.14.0

@@ -9,15 +9,14 @@ numeric prognostic estimates ``N_i``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
+import numpy as np
 
 import pandas as pd
 
 from llmsa.data import (
     GBSG_CAT, GBSG_NUM, METABRIC_CAT, METABRIC_NUM, SUPPORT_CAT, SUPPORT_NUM,
-    FLCHAIN_CAT, FLCHAIN_NUM, ROTTERDAM_CAT, ROTTERDAM_NUM, TCGA_CAT, TCGA_NUM,
-    GBSG3_CAT, GBSG3_NUM, GBSG5_CAT, GBSG5_NUM,
-    METABRIC3_CAT, METABRIC3_NUM, METABRIC5_CAT, METABRIC5_NUM,
+    FLCHAIN_CAT, FLCHAIN_NUM, TCGA_CAT, TCGA_NUM,
     _read_cohort_csv, _support_subsample, SUPPORT_SUBSAMPLE_SIZE,
 )
 
@@ -35,6 +34,9 @@ class Cohort:
     # display names for feature_cols entries that are stored under a different
     # column name (e.g. raw label columns kept alongside the encoded ones)
     feature_labels: dict = field(default_factory=dict)
+    # round float values to this many decimals in the prompt only (None = as
+    # stored); the model inputs are never rounded
+    display_decimals: Optional[int] = None
     _cat: List[str] = field(default_factory=list)
     _num: List[str] = field(default_factory=list)
 
@@ -57,7 +59,15 @@ class Cohort:
 
     def sample_dict(self, row) -> dict:
         """Extract the ordered feature values rendered into the FEATURES block."""
-        return {self.feature_labels.get(c, c): row[c] for c in self.feature_cols}
+        out = {}
+        for c in self.feature_cols:
+            v = row[c]
+            if self.display_decimals is not None and isinstance(v, (float, np.floating)):
+                v = round(float(v), self.display_decimals)
+                if v.is_integer():
+                    v = int(v)
+            out[self.feature_labels.get(c, c)] = v
+        return out
 
 
 # -----------------------------------------------------------------------------
@@ -185,16 +195,16 @@ _SUPPORT_FEATS = """
     dzclass: The patient's disease category amongst "ARF/MOSF", "COPD/CHF/Cirrhosis", "Cancer", "Coma".
     age:	Age of the patients in years
     num.co: The number of simultaneous diseases (or comorbidities) exhibited by the patient. Higher values indicate worse condition.
-    meanbp: mean arterial blood pressure of the patient, measured at day 3.
-    wblc: counts of white blood cells (in thousands) measured at day 3.
-    hrt: heart rate of the patient measured at day 3.
-    resp: respiration rate of the patient measured at day 3.
+    meanbp: mean arterial blood pressure of the patient (mmHg), measured at day 3.
+    wblc: counts of white blood cells (x 1000 per microlitre) measured at day 3.
+    hrt: heart rate of the patient (beats per minute) measured at day 3.
+    resp: respiration rate of the patient (breaths per minute) measured at day 3.
     temp: temperature in Celsius degrees measured at day 3.
-    pafi: PaO2/FiO2 ratio measured at day 3, a widely used clinical indicator of hypoxaemia.
-    alb: serum albumin levels measured at day 3.
-    bili: bilirubin levels measured at day 3.
-    crea: serum creatinine levels measured at day 3.
-    sod: serum sodium concentration measured at day 3.
+    pafi: PaO2/FiO2 ratio (mmHg) measured at day 3, a widely used clinical indicator of hypoxaemia.
+    alb: serum albumin (g/dL) measured at day 3.
+    bili: serum bilirubin (mg/dL) measured at day 3.
+    crea: serum creatinine (mg/dL) measured at day 3.
+    sod: serum sodium concentration (mEq/L) measured at day 3.
     """
 
 
@@ -242,93 +252,16 @@ COHORTS = {
     ),
     "support": Cohort(
         name="support", description=_SUPPORT_DESC, feature_list=_SUPPORT_FEATS,
-        feature_cols=["sex", "dzclass", "age", "num.co", "meanbp", "wblc", "hrt",
+        # raw clinical values (see llmsa.data._read_support_raw); the
+        # categoricals are rendered from their original labels
+        feature_cols=["sex_raw", "dzclass_raw", "age", "num.co", "meanbp", "wblc", "hrt",
                       "resp", "temp", "pafi", "alb", "bili", "crea", "sod"],
+        feature_labels={"sex_raw": "sex", "dzclass_raw": "dzclass"},
+        display_decimals=2,
         briefing=_BRIEFINGS["support"],
         _cat=list(SUPPORT_CAT), _num=list(SUPPORT_NUM),
     ),
 }
-
-
-# -----------------------------------------------------------------------------
-# Reduced-covariate variants (covariate-sparsity experiment). Same cohort and
-# outcomes; the LLM and the downstream models both see only the listed subset.
-# -----------------------------------------------------------------------------
-
-_GBSG3_FEATS = """
-    age: age, years
-    grade: tumor grade
-    nodes: number of positive lymph nodes
-    """
-_GBSG5_FEATS = """
-    age: age, years
-    size: tumor size, mm
-    grade: tumor grade
-    nodes: number of positive lymph nodes
-    hormon: hormonal therapy, 0= no, 1= yes
-    """
-_METABRIC3_FEATS = """
-    age:	age, years
-    MKI67:	MKI67 gene expression level
-    ER_positive: estrogen receptor positive, 0= no, 1= yes
-    """
-_METABRIC5_FEATS = """
-    age:	age, years
-    MKI67:	MKI67 gene expression level
-    ERBB2:	ERBB2 gene expression level
-    ER_positive: estrogen receptor positive, 0= no, 1= yes
-    hormone_treatment: hormonal therapy, 0= no, 1= yes
-    """
-
-for _name, _desc, _feats, _cat, _num, _cols_order, _brief in (
-    ("gbsg3", _GBSG_DESC, _GBSG3_FEATS, GBSG3_CAT, GBSG3_NUM,
-     ["age", "grade", "nodes"], _BRIEFINGS["gbsg"]),
-    ("gbsg5", _GBSG_DESC, _GBSG5_FEATS, GBSG5_CAT, GBSG5_NUM,
-     ["age", "size", "grade", "nodes", "hormon"], _BRIEFINGS["gbsg"]),
-    ("metabric3", _METABRIC_DESC, _METABRIC3_FEATS, METABRIC3_CAT, METABRIC3_NUM,
-     ["age", "MKI67", "ER_positive"], _BRIEFINGS["metabric"]),
-    ("metabric5", _METABRIC_DESC, _METABRIC5_FEATS, METABRIC5_CAT, METABRIC5_NUM,
-     ["age", "MKI67", "ERBB2", "ER_positive", "hormone_treatment"], _BRIEFINGS["metabric"]),
-):
-    COHORTS[_name] = Cohort(
-        name=_name, description=_desc, feature_list=_feats,
-        feature_cols=_cols_order, briefing=_brief,
-        _cat=list(_cat), _num=list(_num),
-    )
-
-
-# -----------------------------------------------------------------------------
-# Rotterdam breast cancer cohort (GBSG's companion cohort; same covariates and
-# the same recurrence-free survival endpoint). Uses the GBSG briefing, since it
-# is the same disease and the briefing carries no cohort-specific figures.
-# -----------------------------------------------------------------------------
-
-_ROTTERDAM_DESC = """Source: Rotterdam tumour bank (Royston and Altman, 2013).
-Description:
-    Records of 2,982 patients with primary breast cancer treated at the Rotterdam tumour bank,
-    with follow-up for recurrence-free survival (the earlier of recurrence or death). The cohort
-    is the standard companion to the German Breast Cancer Study Group data and carries the same
-    prognostic variables.
-"""
-
-_ROTTERDAM_FEATS = """
-    age: age at surgery, years
-    meno: menopausal status (0= premenopausal, 1= postmenopausal)
-    size: tumour size category (<=20 mm, 20-50 mm, >50 mm)
-    grade: tumour grade (2 or 3)
-    nodes: number of positive lymph nodes
-    pgr: progesterone receptors (fmol/l)
-    er: estrogen receptors (fmol/l)
-    hormon: hormonal therapy, 0= no, 1= yes
-    """
-
-COHORTS["rotterdam"] = Cohort(
-    name="rotterdam", description=_ROTTERDAM_DESC, feature_list=_ROTTERDAM_FEATS,
-    feature_cols=["age", "meno", "size_raw", "grade_raw", "nodes", "pgr", "er", "hormon"],
-    feature_labels={"size_raw": "size", "grade_raw": "grade"},
-    briefing=_BRIEFINGS["gbsg"],
-    _cat=list(ROTTERDAM_CAT), _num=list(ROTTERDAM_NUM),
-)
 
 
 # -----------------------------------------------------------------------------
@@ -399,65 +332,12 @@ if COHORTS["tcgafull"] is None:
 
 from llmsa.data import SMALL_COHORTS as _SMALL
 
-_BRIEFINGS['veteran'] = 'Cohort context (advanced inoperable lung cancer, use as background knowledge):\n- Performance status is the dominant prognostic factor in advanced lung cancer; low Karnofsky\n  scores indicate poor functional reserve and short expected survival.\n- Small-cell histology behaves more aggressively than squamous or adenocarcinoma histology.\n- Advanced inoperable disease carries a poor prognosis overall, with chemotherapy offering\n  modest benefit in this setting.\n- Longer time from diagnosis to treatment can reflect more indolent disease.'
-COHORTS['veteran'] = Cohort(
-    name='veteran', description='Source: US Veterans Administration lung cancer trial (Kalbfleisch and Prentice).\nDescription:\n    A randomised trial in 137 male patients with advanced inoperable lung cancer comparing a\n    standard and a test chemotherapy. The endpoint is death from any cause.\n', feature_list='\n    celltype: histological cell type (squamous, smallcell, adeno, large)\n    karnofsky: Karnofsky performance score (0-100; higher is better functional status)\n    months_from_dx: months from diagnosis to randomisation\n    age: age in years\n    prior_therapy: prior chemotherapy received (yes/no)\n    treatment: assigned treatment arm (standard/test)\n    ',
-    feature_cols=[c + "_raw" if c in _SMALL['veteran'][0] else c
-                  for c in list(_SMALL['veteran'][1]) + list(_SMALL['veteran'][0])],
-    feature_labels={c + "_raw": c for c in _SMALL['veteran'][0]},
-    briefing=_BRIEFINGS['veteran'],
-    _cat=list(_SMALL['veteran'][0]), _num=list(_SMALL['veteran'][1]),
-)
+#: Prompt directory of cohorts registered at run time (default: prompts/).
+PROMPT_DIRS: dict = {}
 
-_BRIEFINGS['lung'] = 'Cohort context (advanced lung cancer, use as background knowledge):\n- ECOG and Karnofsky performance status are the strongest clinical predictors of survival in\n  advanced lung cancer; deteriorating performance status implies short expected survival.\n- Significant recent weight loss (cancer cachexia) is an independent adverse prognostic factor.\n- Reduced caloric intake reflects both disease burden and nutritional depletion.\n- Physician- and patient-rated performance scores may disagree; both carry information.'
-COHORTS['lung'] = Cohort(
-    name='lung', description='Source: North Central Cancer Treatment Group (NCCTG) lung cancer study.\nDescription:\n    Survival of 228 patients with advanced lung cancer, with performance scores rated by both\n    physician and patient, and nutritional indicators. The endpoint is death from any cause.\n', feature_list='\n    age: age in years\n    sex: patient sex\n    ecog: ECOG performance status rated by the physician (0 good, higher is worse)\n    karnofsky_phys: Karnofsky performance score rated by the physician (0-100)\n    karnofsky_pat: Karnofsky performance score rated by the patient (0-100)\n    meal_calories: calories consumed at meals\n    weight_loss: weight loss in the last six months (pounds)\n    ',
-    feature_cols=[c + "_raw" if c in _SMALL['lung'][0] else c
-                  for c in list(_SMALL['lung'][1]) + list(_SMALL['lung'][0])],
-    feature_labels={c + "_raw": c for c in _SMALL['lung'][0]},
-    briefing=_BRIEFINGS['lung'],
-    _cat=list(_SMALL['lung'][0]), _num=list(_SMALL['lung'][1]),
-)
 
-_BRIEFINGS['whas500'] = 'Cohort context (hospitalised acute myocardial infarction, use as background knowledge):\n- Older age is the dominant determinant of mortality after myocardial infarction.\n- Cardiogenic shock and complete heart block are severe complications carrying very high\n  short-term mortality; congestive heart failure complicating infarction is also strongly adverse.\n- Recurrent infarction implies worse prognosis than a first event.\n- Both hypotension and marked tachycardia at admission indicate haemodynamic compromise.\n- Very low body mass index is associated with frailty and worse outcome.'
-COHORTS['whas500'] = Cohort(
-    name='whas500', description='Source: Worcester Heart Attack Study (WHAS500).\nDescription:\n    A population-based study of 500 patients hospitalised with acute myocardial infarction in\n    Worcester, Massachusetts, followed for all-cause mortality after admission.\n', feature_list='\n    age: age in years\n    bmi: body mass index at admission\n    sysbp: systolic blood pressure at admission (mmHg)\n    diasbp: diastolic blood pressure at admission (mmHg)\n    hr: initial heart rate (beats per minute)\n    gender: patient sex\n    chf: congestive heart failure complications (yes/no)\n    afb: atrial fibrillation (yes/no)\n    av3: complete heart block (yes/no)\n    cvd: cardiovascular disease history (yes/no)\n    miord: MI order (first or recurrent)\n    mitype: MI type (Q-wave or non-Q-wave)\n    sho: cardiogenic shock (yes/no)\n    ',
-    feature_cols=[c + "_raw" if c in _SMALL['whas500'][0] else c
-                  for c in list(_SMALL['whas500'][1]) + list(_SMALL['whas500'][0])],
-    feature_labels={c + "_raw": c for c in _SMALL['whas500'][0]},
-    briefing=_BRIEFINGS['whas500'],
-    _cat=list(_SMALL['whas500'][0]), _num=list(_SMALL['whas500'][1]),
-)
-
-_BRIEFINGS['larynx'] = 'Cohort context (laryngeal carcinoma, use as background knowledge):\n- Stage at diagnosis dominates prognosis: stage I disease is usually curable with local therapy,\n  while stage IV disease carries substantially reduced survival.\n- Older age at diagnosis is associated with worse outcome, partly through comorbidity and\n  reduced tolerance of treatment.'
-COHORTS['larynx'] = Cohort(
-    name='larynx', description='Source: Larynx cancer cohort (Kardaun; Klein and Moeschberger).\nDescription:\n    Ninety male patients with cancer of the larynx treated at a single institution, followed for\n    death from any cause. Disease stage at diagnosis is the principal covariate.\n', feature_list='\n    age: age at diagnosis, years\n    stage: disease stage at diagnosis (I, II, III or IV)\n    ',
-    feature_cols=[c + "_raw" if c in _SMALL['larynx'][0] else c
-                  for c in list(_SMALL['larynx'][1]) + list(_SMALL['larynx'][0])],
-    feature_labels={c + "_raw": c for c in _SMALL['larynx'][0]},
-    briefing=_BRIEFINGS['larynx'],
-    _cat=list(_SMALL['larynx'][0]), _num=list(_SMALL['larynx'][1]),
-)
-
-_BRIEFINGS['aids'] = 'Cohort context (HIV infection with prior antiretroviral therapy, use as background knowledge):\n- The baseline CD4 count is the dominant prognostic marker: low counts indicate advanced\n  immunosuppression and a high risk of progression to AIDS or death.\n- Poorer Karnofsky performance status indicates greater disease burden.\n- Extensive prior monotherapy is associated with drug resistance and reduced response.\n- Three-drug regimens were substantially more effective than two-drug regimens in this era.'
-COHORTS['aids'] = Cohort(
-    name='aids', description='Source: AIDS Clinical Trials Group protocol 320 (ACTG 320).\nDescription:\n    A randomised trial in HIV-infected patients with prior antiretroviral therapy comparing\n    two- and three-drug regimens. The endpoint is progression to AIDS or death.\n', feature_list='\n    age: age in years\n    cd4: baseline CD4 T-cell count (cells/mm3)\n    priorzdv: months of prior zidovudine therapy\n    karnof: Karnofsky performance score category\n    sex: patient sex\n    raceth: race/ethnicity category\n    ivdrug: history of intravenous drug use\n    hemophil: haemophilia (yes/no)\n    strat2: CD4 stratum at entry\n    tx: treatment assignment\n    txgrp: treatment group\n    ',
-    feature_cols=[c + "_raw" if c in _SMALL['aids'][0] else c
-                  for c in list(_SMALL['aids'][1]) + list(_SMALL['aids'][0])],
-    feature_labels={c + "_raw": c for c in _SMALL['aids'][0]},
-    briefing=_BRIEFINGS['aids'],
-    _cat=list(_SMALL['aids'][0]), _num=list(_SMALL['aids'][1]),
-)
-
-_BRIEFINGS['brcamicro'] = 'Cohort context (invasive breast cancer with microarray profiling, use as background knowledge):\n- Estrogen-receptor-positive disease generally carries a more favourable prognosis and predicts\n  benefit from endocrine therapy.\n- Higher histological grade indicates poorer differentiation and worse outcome.\n- Microarray probe-set values are platform-specific normalised intensities; their absolute scale\n  has no fixed clinical interpretation.'
-COHORTS['brcamicro'] = Cohort(
-    name='brcamicro', description='Source: Breast cancer gene-expression cohort (van de Vijver / Desmedt-style microarray data).\nDescription:\n    198 breast cancer patients with clinical grade and estrogen-receptor status together with\n    normalised microarray expression values for individual probe sets. The endpoint is distant\n    metastasis-free survival.\n', feature_list='\n    er: estrogen receptor status\n    grade: histological grade\n    X200726_at, X200965_s_at, X201068_s_at, X201091_s_at, X201288_at, X201368_at,\n    X201663_s_at, X201664_at, X202239_at, X202240_at:\n        normalised microarray expression values for individual Affymetrix probe sets\n    ',
-    feature_cols=[c + "_raw" if c in _SMALL['brcamicro'][0] else c
-                  for c in list(_SMALL['brcamicro'][1]) + list(_SMALL['brcamicro'][0])],
-    feature_labels={c + "_raw": c for c in _SMALL['brcamicro'][0]},
-    briefing=_BRIEFINGS['brcamicro'],
-    _cat=list(_SMALL['brcamicro'][0]), _num=list(_SMALL['brcamicro'][1]),
-)
+def prompts_dir(dataset: str, default: str) -> str:
+    return PROMPT_DIRS.get(dataset, default)
 
 
 # --- UCI Heart Failure Clinical Records ---------------------------------------

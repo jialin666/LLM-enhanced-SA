@@ -99,7 +99,7 @@ if __name__ == "__main__":
                    help="seed of the random cohort draw (independent of the split seeds)")
     p.add_argument("--cindex-tau", choices=["none", "grid"], default="none",
                    help="Uno C truncation: 'grid' = evaluation-grid maximum (IBS horizon); "
-                        "'none' = as-submitted untruncated metric")
+                        "'none' = untruncated")
     args = p.parse_args()
     main(seeds=list(range(args.seeds)), datasets=args.datasets.split(","),
          lam=args.lam, full_support=args.full_support,

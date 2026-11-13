@@ -47,7 +47,7 @@ Prompt evaluation is cast as an ordinal alignment task.
   Kaplan-Meier curve is divided into three parts along the time axis at the
   tertiles `t_1 < t_2` of the observed event times; a subject with an event is
   labelled `y_i ∈ {low, intermediate, high}` by the part containing its event
-  time, and censored subjects receive no reference label. (The as-submitted
+  time, and censored subjects receive no reference label. (The pre-v1.1
   construction, which fitted the curve on the full cohort and labelled every
   subject by `Ŝ(T_i)`, is retained behind `--legacy-labels --legacy-full-cohort`
   for reproducibility only; it leaks test outcomes and inverts the ordering.)

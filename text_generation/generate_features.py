@@ -43,9 +43,9 @@ import pandas as pd
 from openai import OpenAI
 
 from llmsa.data import (
-    _csv_path, _read_cohort_csv, _support_subsample, SUPPORT_SUBSAMPLE_SIZE,
+    _csv_path, _data_dir, _read_cohort_csv, _support_subsample, SUPPORT_SUBSAMPLE_SIZE,
 )
-from .cohorts import COHORTS
+from .cohorts import COHORTS, prompts_dir
 from .meta_prompt import (
     BRIEFING_EMPTY, NUMERIC_FIELDS, COHORT_HORIZONS, horizon_fields,
     retarget_horizons, render_features_block, fill_template,
@@ -80,7 +80,7 @@ def _load_selected_prompt(dataset: str, prompt_id=None) -> str:
     highest-graded candidate P* is used. Grades are a per-run artefact and are not
     shipped with the repository.
     """
-    with open(os.path.join(PROMPTS_DIR, f"{dataset}_target_prompts.json")) as f:
+    with open(os.path.join(prompts_dir(dataset, PROMPTS_DIR), f"{dataset}_target_prompts.json")) as f:
         prompts = json.load(f)
 
     if prompt_id is not None:
@@ -90,7 +90,7 @@ def _load_selected_prompt(dataset: str, prompt_id=None) -> str:
                            f"(available: {list(prompts)[:5]}...)")
         return prompts[key]["template"]
 
-    grades_path = os.path.join(PROMPTS_DIR, f"{dataset}_templates_grades.json")
+    grades_path = os.path.join(prompts_dir(dataset, PROMPTS_DIR), f"{dataset}_templates_grades.json")
     if not os.path.exists(grades_path):
         raise FileNotFoundError(
             f"No selection found for {dataset}. Either run "
@@ -161,7 +161,7 @@ def generate_for_dataset(dataset: str, model="gpt-4o",
         print(f"  [{dataset}] horizons retargeted -> survival@{long_label}, "
               f"event risk@{short_label}", flush=True)
 
-    narr_dir = _csv_path("data", tag, "narratives", dataset)
+    narr_dir = os.path.join(_data_dir(dataset), tag, "narratives", dataset)
     os.makedirs(narr_dir, exist_ok=True)
 
     num_cols = {f: f"llm_{short}_{tag}" for f, short in zip(
@@ -262,13 +262,13 @@ def generate_for_dataset(dataset: str, model="gpt-4o",
             f"[{dataset}] {len(pending)} patients still failing after retries "
             f"(indices {pending[:10]}...). Nothing written; re-run to resume from cache.")
 
-    struct_out = _csv_path("data", f"{tag}_structured_{dataset}.csv")
+    struct_out = os.path.join(_data_dir(dataset), f"{tag}_structured_{dataset}.csv")
     pd.DataFrame(rows).to_csv(struct_out, index=False)
     print(f"[{dataset}] structured N_i ({len(rows)} rows, {n_parse_fail} parse "
           f"fallbacks) -> {struct_out}")
 
     emb = _embed(client, narratives, model=embedding_model)
-    emb_out = _csv_path("data", f"embeddings_{tag}_{dataset}.npy")
+    emb_out = os.path.join(_data_dir(dataset), f"embeddings_{tag}_{dataset}.npy")
     np.save(emb_out, emb)
     print(f"[{dataset}] embeddings E_i {emb.shape} -> {emb_out}")
 

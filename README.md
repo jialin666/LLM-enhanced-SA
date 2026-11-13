@@ -1,5 +1,7 @@
 # LLM-SA: Large Language Model-Enhanced Survival Analysis
 
+> **Changes since v1.1:** see [`CHANGES.md`](CHANGES.md).
+
 Official implementation of **LLM-SA**, a framework that augments structured
 clinical covariates with LLM-derived numerical prognostic estimates and
 patient-specific clinical narrative embeddings, and integrates them through a
@@ -7,8 +9,6 @@ heterogeneous stacking ensemble of survival learners.
 
 > **Large Language Models-Enhanced Survival Analysis**
 > Jialin Hua, Thierry Chekouo, Xuewen Lu, Hua Shen, Jingjing Wu
-> Under review at the *Journal of Biomedical Informatics* (revised manuscript submitted September 2026).
-> The code and released LLM outputs of version 1.1 correspond to the revised manuscript.
 
 ---
 
@@ -68,8 +68,16 @@ text_generation/           # automatic textual representation learning (manuscri
   plot_label_construction.py #  Appendix B figure (reference-label construction)
 
 prompts/                   # released candidate target prompts, per cohort
+development_cohorts/       # further public cohorts evaluated during development (see below)
 docs/METHOD.md             # method write-up
 ```
+
+`development_cohorts/` holds seven further public cohorts (Rotterdam, WHAS500, Veteran, Larynx,
+NCCTG Lung, ACTG320, breast-cancer microarray) evaluated during method development and not part
+of the benchmark, with their cohort definitions and candidate prompts; their LLM outputs and
+results are in the release asset (see **Released LLM outputs**). Any
+script runs on them through `python -m development_cohorts.run <module> [arguments]`, e.g.
+`python -m development_cohorts.run llmsa.run_ablation --datasets larynx --feature-version v5 --cindex-tau grid`.
 
 ---
 
@@ -147,7 +155,7 @@ python -m text_generation.select_prompt --dataset flchain --narrative-model gpt-
 # variants:
 #   --events-only          restrict graded labels to observed events
 #   --briefing none        grade with an empty briefing slot
-#   --legacy-full-cohort   as-submitted behaviour (leaks; comparison only)
+#   --legacy-full-cohort   pre-v1.1 behaviour (leaks; comparison only)
 ```
 
 This writes the candidate prompts to `prompts/gbsg_target_prompts.json`, their
@@ -186,10 +194,17 @@ D = full framework; `--cindex-tau grid` truncates Uno's C-index at the horizon
 of the integrated Brier score, as in the paper):
 
 ```bash
-python -m llmsa.run_ablation --seeds 30 --datasets metabric,gbsg,support,flchain,tcga,tcgafull \
-    --feature-version v5fixmini --full-support --cindex-tau grid
-python -m llmsa.run_ablation --seeds 30 --datasets heartfailure,wpbc --feature-version v5 --cindex-tau grid
+python -m llmsa.run_ablation --seeds 30 --datasets metabric,gbsg,flchain,tcga,tcgafull \
+    --feature-version v5fixmini --cindex-tau grid
+python -m llmsa.run_ablation --seeds 30 --datasets support --feature-version v5rawmini --full-support --cindex-tau grid
+python -m llmsa.run_ablation --seeds 30 --datasets heartfailure --feature-version v5hz --cindex-tau grid
+python -m llmsa.run_ablation --seeds 30 --datasets wpbc --feature-version v5 --cindex-tau grid
 ```
+
+SUPPORT uses features generated from the covariates in clinical units
+(`v5rawmini`); SUPPORT and Heart Failure ask the LLM for horizons within their
+follow-up (60/180 days and 90/180 days; `COHORT_HORIZONS` in
+`text_generation/meta_prompt.py`).
 
 The meta-learner prior strength defaults to `--lam 1.0`, the value used for
 every reported result. `llmsa.train_eval` runs the full framework alone with
@@ -205,8 +220,8 @@ python -m llmsa.tune_baselines --datasets heartfailure,wpbc --tune-seeds 20 --se
 python -m llmsa.run_tuned_baselines --logs <tuning log> --datasets metabric,gbsg --seeds 30 --full-support --cindex-tau grid
 ```
 
-`llmsa.run_baselines` runs the fixed (untuned) configuration of the submitted
-version and is kept for comparison only.
+`llmsa.run_baselines` runs the fixed (untuned) pre-v1.1 configuration and is
+kept for comparison only.
 
 **Further analyses** reported in Sec 4.4 and the appendices:
 
@@ -222,6 +237,14 @@ python -m text_generation.plot_label_construction --outdir figures
 Both C-index and IBS are reported under Uno's IPCW estimator so every model is
 scored under identical definitions.
 
+**Statistics.** The per-split test results of every reported run are released
+as `results/per_split_results.csv` (see below). The corrected resampled t-tests,
+multiple-comparison adjustment and tests across cohorts are computed from it:
+
+```bash
+python analysis/corrected_stats.py --results results/per_split_results.csv --out stats/
+```
+
 ### SUPPORT sample size
 
 Every reported experiment uses the full 9,105-patient SUPPORT cohort
@@ -233,23 +256,35 @@ subsample was a development-time convenience and is not used in the paper.
 ## Released LLM outputs
 
 The per-patient outputs behind every reported number are published as the
-release asset `llmsa-llm-outputs.tar.gz` (280 MB) of release **v1.1**:
-<https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.1/llmsa-llm-outputs.tar.gz>
-(release page: <https://github.com/jialin666/LLM-enhanced-SA/releases/tag/v1.1>).
+release asset `llmsa-llm-outputs.tar.gz` of release **v1.2**:
+<https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.2/llmsa-llm-outputs.tar.gz>
+(release page: <https://github.com/jialin666/LLM-enhanced-SA/releases/tag/v1.2>).
 
 ```bash
 curl -L -o llmsa-llm-outputs.tar.gz \
-  https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.1/llmsa-llm-outputs.tar.gz
-tar -xzf llmsa-llm-outputs.tar.gz          # unpacks into data/
+  https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.2/llmsa-llm-outputs.tar.gz
+tar -xzf llmsa-llm-outputs.tar.gz          # unpacks into data/, development_cohorts/data/ and results/
 ```
 
-The archive contains, for each cohort, the
-structured numeric estimates (`data/<tag>_structured_<cohort>.csv`), the
-narrative embeddings (`data/embeddings_<tag>_<cohort>.npy`) and the raw
-narratives with the parsed JSON (`data/<tag>/narratives/<cohort>/`), for the
-reported arm (`v5fixmini`, or `v5` for Heart Failure and WPBC) and for the
-no-briefing arm (`v5nobrief` / `v5nobriefmini`). The full text of every cohort
-briefing is in `text_generation/cohorts.py`.
+The archive contains, for each cohort and feature generation, the structured
+numeric estimates (`data/<tag>_structured_<cohort>.csv`), the narrative
+embeddings (`data/embeddings_<tag>_<cohort>.npy`) and the raw narratives with
+the parsed JSON (`data/<tag>/narratives/<cohort>/`):
+
+| Tag | Cohorts | Used for |
+|---|---|---|
+| `v5fixmini` | METABRIC, GBSG, FLCHAIN, TCGA (both); SUPPORT | Table 2, learning curve, random cohorts; SUPPORT for the further analyses above |
+| `v5rawmini` | SUPPORT | Table 2; cohort briefing comparison (with briefing) |
+| `v5hz` | Heart Failure | Table 2 |
+| `v5` | WPBC | Table 2 |
+| `v5` / `v5mini` | GBSG, METABRIC, TCGA, Heart Failure, WPBC / FLCHAIN | cohort briefing comparison (with briefing) |
+| `v5nobrief` / `v5nobriefmini` / `v5nobriefrawmini` | the same cohorts / FLCHAIN / SUPPORT | cohort briefing comparison (without briefing) |
+
+It also contains the same outputs for the development cohorts
+(`development_cohorts/data/`) and `results/per_split_results.csv`, the per-split
+test C-index and IBS of every reported run (columns `experiment`, `cohort`,
+`model`, `features`, `train_n`, `draw`, `split`, `cindex`, `ibs`). The full text
+of every cohort briefing is in `text_generation/cohorts.py`.
 
 ---
 

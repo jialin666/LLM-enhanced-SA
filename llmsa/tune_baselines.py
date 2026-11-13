@@ -1,4 +1,4 @@
-"""Hyperparameter search for the baseline survival models (reviewer request R2-M5).
+"""Hyperparameter search for the baseline survival models.
 
 Protocol (identical for every baseline, and matched to the search budget used for
 LLM-SA's own deep branch):

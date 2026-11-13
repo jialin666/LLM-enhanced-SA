@@ -1,6 +1,6 @@
 """Sensitivity of LLM-SA to the meta-learner prior strength, per stratum.
 
-The baselines were tuned for this revision (R2-M5) but LLM-SA never was: it has
+The baselines are tuned per cohort (``tune_baselines.py``), whereas LLM-SA has
 carried ``meta_prior_lam = 1.0`` since the pooled-cohort runs. That prior pulls
 the simplex weights toward the uniform vector [1/3, 1/3, 1/3]. On a pooled
 cohort the validation fold is large enough for the data term to dominate and the

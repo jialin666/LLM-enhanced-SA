@@ -25,7 +25,7 @@ from openai import OpenAI
 
 
 # Text inserted into {BRIEFING} when generation runs briefing-free
-# (the R2-M3 no-briefing ablation arm).
+# (the no-briefing ablation arm).
 BRIEFING_EMPTY = "(no additional background provided)"
 
 # The three numeric fields consumed downstream (N_i).
@@ -40,8 +40,9 @@ NUMERIC_FIELDS = ("estimated_5yr_survival_prob", "estimated_2yr_event_risk", "co
 COHORT_HORIZONS = {
     # follow-up 285 d, median event 44 d; 90d/180d bracket 69 and 89 of 96 events
     "heartfailure": ("90d", "180d"),
-    # follow-up 364 d, median event 91 d; 90d/270d bracket 46 and 94 of 96 events
-    "aids": ("90d", "270d"),
+    # hospitalised critically ill adults; median event times 9-461 days. The
+    # cohort's own endpoints are 2- and 6-month survival.
+    "support": ("60d", "180d"),
 }
 
 

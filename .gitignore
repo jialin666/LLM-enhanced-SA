@@ -36,6 +36,15 @@ data/
 prompts/*_templates_grades.json
 prompts/*_numeric_grades.json
 
+# Development cohorts: code, candidate prompts and logs are tracked; data as for data/
+development_cohorts/data/
+!development_cohorts/prompts/*_target_prompts.json
+
+# Run logs and unpacked results (the per-split results ship in the release asset)
+*.log
+results/
+stats/
+
 # Model checkpoints written by pycox during training
 *.pt
 weight_checkpoint_*

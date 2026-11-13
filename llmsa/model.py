@@ -134,12 +134,9 @@ class _BaseRSF:
 #: years -> native time unit of each cohort, for placing the LLM's 2-year and
 #: 5-year anchors on the cohort's own time axis.
 _TIME_UNIT_PER_YEAR = {
-    "gbsg": 365.25, "support": 365.25, "flchain": 365.25, "rotterdam": 365.25,
+    "gbsg": 365.25, "support": 365.25, "flchain": 365.25,
     "tcga": 365.25, "tcgafull": 365.25, "heartfailure": 365.25,
-    "whas500": 365.25, "brcamicro": 365.25, "aids": 365.25, "lung": 365.25,
-    "veteran": 365.25,
     "metabric": 12.0, "wpbc": 12.0,
-    "larynx": 1.0,
 }
 
 
@@ -151,7 +148,6 @@ _TIME_UNIT_PER_YEAR = {
 _D = 365.25
 _VERSION_ANCHOR_YEARS = {
     ("v5hz", "heartfailure"): (90.0 / _D, 180.0 / _D),   # follow-up 285 d
-    ("v5hz", "aids"):         (90.0 / _D, 270.0 / _D),   # follow-up 364 d
 }
 
 
@@ -178,7 +174,7 @@ class _BaseLLM:
                base learner. With S(t) = exp(-(t/lam)^k) and y = ln(-ln S):
                    k = (y2 - y1) / (ln t2 - ln t1),  ln lam = ln t1 - y1 / k
                Requires the anchors to sit inside follow-up, so it is not
-               meaningful on cohorts whose horizon is under ~2 years (ACTG320,
+               meaningful on cohorts whose horizon is under ~2 years (e.g.
                Heart Failure).
     """
 
@@ -389,7 +385,7 @@ class TrainConfig:
     patience: int = 20
     n_restarts: int = 2
     # L2 prior on the meta-weights toward [1/3, 1/3, 1/3]
-    meta_prior_lam: float = 1.0  # headline setting (exp 53); 0.3 was the pre-revision default
+    meta_prior_lam: float = 1.0  # headline setting (exp 53); 0.3 was the pre-v1.1 default
     pgd_lr: float = 0.1
     pgd_steps: int = 200
     # Internal RSF base learner (exposed so LLM-SA can be tuned like the baselines)

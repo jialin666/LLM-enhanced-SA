@@ -48,13 +48,13 @@ if __name__ == "__main__":
                    help="evaluate SUPPORT on the full 9105-patient cohort "
                         "(must match the LLM-SA setting being compared against)")
     p.add_argument("--legacy-splits", action="store_true",
-                   help="reproduce the as-submitted splits (no dev holdout pinning)")
+                   help="reproduce the pre-v1.1 splits (no dev holdout pinning)")
     p.add_argument("--cohort-n", type=int, default=None,
                    help="random event-stratified cohort of this many patients drawn from the full frame")
     p.add_argument("--cohort-seed", type=int, default=0, help="seed of the cohort draw")
     p.add_argument("--cindex-tau", choices=["none", "grid"], default="none",
                    help="Uno C truncation: 'grid' = evaluation-grid maximum (IBS horizon); "
-                        "'none' = as-submitted untruncated metric")
+                        "'none' = untruncated")
     args = p.parse_args()
     main(seeds=list(range(args.seeds)), datasets=args.datasets.split(","),
          models=args.models.split(","), full_support=args.full_support,

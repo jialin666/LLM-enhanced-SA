@@ -1,4 +1,4 @@
-"""Per-cohort hyperparameter tuning for LLM-SA (protocol parity with R2-M5).
+"""Per-cohort hyperparameter tuning for LLM-SA (the same protocol as ``tune_baselines.py``).
 
 ``tune_baselines.py`` grid-searched every baseline per cohort, but LLM-SA itself
 was left on stock settings, so the published comparison tuned the competitors

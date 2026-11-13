@@ -116,7 +116,7 @@ def evaluate_model_on_dataset(
             if surv.shape[1] != len(grid):
                 raise ValueError(f"surv has {surv.shape[1]} cols but grid has {len(grid)}")
             # ``cindex_tau="grid"``: Uno's C truncated at the evaluation grid
-            # maximum (the IBS horizon); "none" reproduces the as-submitted metric.
+            # maximum (the IBS horizon); "none" leaves it untruncated.
             _tau = float(np.max(grid)) if cindex_tau == "grid" else None
             c = ipcw_cindex(
                 bundle.train.time, bundle.train.event,

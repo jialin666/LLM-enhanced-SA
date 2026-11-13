@@ -97,29 +97,12 @@ SUPPORT_SUBSAMPLE_SEED = 20260101
 FLCHAIN_CAT = ["sex", "mgus"]
 FLCHAIN_NUM = ["age", "sample.yr", "flc.grp", "kappa", "lambda", "creatinine"]
 
-# Reduced-covariate variants used for the covariate-sparsity experiment: the
-# same patients and outcomes, with only a subset of covariates exposed to BOTH
-# the LLM (via the {FEATURES} block) and the downstream models. This tests the
-# manuscript's motivating claim that LLM augmentation helps when covariates are
-# sparse.
-GBSG3_CAT, GBSG3_NUM = ["grade"], ["age", "nodes"]
-GBSG5_CAT, GBSG5_NUM = ["grade", "hormon"], ["age", "size", "nodes"]
-METABRIC3_CAT, METABRIC3_NUM = ["ER_positive"], ["age", "MKI67"]
-METABRIC5_CAT, METABRIC5_NUM = ["ER_positive", "hormone_treatment"], ["age", "MKI67", "ERBB2"]
-
-# Rotterdam breast cancer cohort (n=2,982): the standard companion/validation
-# cohort for GBSG, with the same covariates and the same recurrence-free
-# survival endpoint. Added to test whether the LLM benefit observed on GBSG
-# replicates on an independent cohort of the same disease.
 # TCGA-CDR pan-cancer pilot (n=2,000): 8 raw covariates that expand to ~200
 # one-hot columns, dominated by high-cardinality, mostly-rare levels (33 cancer
 # types, 94 histological subtypes). Tests whether LLM augmentation helps when
 # covariates are semantically rich but statistically sparse.
 TCGA_CAT = ["cancer_type", "histology", "stage", "grade", "race", "gender"]
 TCGA_NUM = ["age", "dx_year"]
-
-ROTTERDAM_CAT = ["meno", "size", "grade", "hormon"]
-ROTTERDAM_NUM = ["age", "nodes", "pgr", "er"]
 
 
 # Small public survival cohorts (panel testing the low-data regime).
@@ -129,18 +112,14 @@ SMALL_COHORTS = {
     "wpbc": ([], ["tumor_size","lymph_node_status","radius_worst","texture_worst","perimeter_worst",
                   "area_worst","smoothness_worst","compactness_worst","concavity_worst",
                   "concave_points_worst","symmetry_worst","fractal_dim_worst"]),
-    "veteran": (['celltype', 'prior_therapy', 'treatment'], ['age', 'karnofsky', 'months_from_dx']),
-    "lung": (['sex_lbl'], ['age', 'ecog', 'karnofsky_phys', 'karnofsky_pat', 'meal_calories', 'weight_loss']),
-    "whas500": (['afb', 'av3', 'chf', 'cvd', 'gender', 'miord', 'mitype', 'sho'], ['age', 'bmi', 'diasbp', 'hr', 'sysbp']),
-    "larynx": (['stage'], ['age']),
-    "aids": (['hemophil', 'ivdrug', 'karnof', 'raceth', 'sex', 'strat2', 'tx', 'txgrp'], ['age', 'cd4', 'priorzdv']),
-    "brcamicro": (['er', 'grade'], ['X200726_at', 'X200965_s_at', 'X201068_s_at', 'X201091_s_at', 'X201288_at', 'X201368_at', 'X201663_s_at', 'X201664_at', 'X202239_at', 'X202240_at']),
 }
 
-REDUCED_PARENT = {"gbsg3": "gbsg", "gbsg5": "gbsg",
-                  "metabric3": "metabric", "metabric5": "metabric"}
+ALL_DATASETS = ("metabric", "gbsg", "support", "flchain", "tcga", "tcgafull")
 
-ALL_DATASETS = ("metabric", "gbsg", "support", "flchain", "rotterdam", "tcga", "tcgafull")
+# Further cohorts can be registered at run time without editing this module:
+# name -> {"cat": [...], "num": [...], "dir": <data directory>, "csv": <file name>}.
+# Their cohort CSV and LLM artefacts are read from "dir" instead of data/.
+EXTRA_COHORTS: dict = {}
 
 # Development hold-out used for prompt selection (KM fit, tertile cut-points,
 # grading subset). These rows are pinned to the training fold of every per-seed
@@ -163,6 +142,12 @@ def _csv_path(*parts: str) -> str:
     return os.path.join(REPO_ROOT, *parts)
 
 
+def _data_dir(name: str) -> str:
+    """Directory holding a cohort's CSV and LLM artefacts."""
+    extra = EXTRA_COHORTS.get(name.lower())
+    return extra["dir"] if extra else _csv_path("data")
+
+
 def _cols(name: str):
     name = name.lower()
     if name == "gbsg":
@@ -173,36 +158,25 @@ def _cols(name: str):
         return list(SUPPORT_CAT), list(SUPPORT_NUM)
     if name == "flchain":
         return list(FLCHAIN_CAT), list(FLCHAIN_NUM)
-    if name == "rotterdam":
-        return list(ROTTERDAM_CAT), list(ROTTERDAM_NUM)
     if name in ("tcga", "tcgafull"):
         return list(TCGA_CAT), list(TCGA_NUM)
     if name in SMALL_COHORTS:
         cat, num = SMALL_COHORTS[name]
         return list(cat), list(num)
-    if name == "gbsg3":
-        return list(GBSG3_CAT), list(GBSG3_NUM)
-    if name == "gbsg5":
-        return list(GBSG5_CAT), list(GBSG5_NUM)
-    if name == "metabric3":
-        return list(METABRIC3_CAT), list(METABRIC3_NUM)
-    if name == "metabric5":
-        return list(METABRIC5_CAT), list(METABRIC5_NUM)
+    if name in EXTRA_COHORTS:
+        return list(EXTRA_COHORTS[name]["cat"]), list(EXTRA_COHORTS[name]["num"])
     raise ValueError(f"unknown dataset name: {name!r}")
 
 
 def _read_cohort_csv(name: str) -> pd.DataFrame:
     """Load the per-cohort CSV holding covariates + time/event (+ text/emb)."""
     name = name.lower()
-    name = REDUCED_PARENT.get(name, name)  # reduced variants share the parent CSV
     if name == "gbsg":
         return pd.read_csv(_csv_path("data", "1_gbsg_all_new_with_embeddings.csv"))
     if name == "metabric":
         return pd.read_csv(_csv_path("data", "5_metabric_all_new_with_embeddings.csv"))
     if name == "flchain":
         return pd.read_csv(_csv_path("data", "4_flchain_all.csv"))
-    if name == "rotterdam":
-        return pd.read_csv(_csv_path("data", "6_rotterdam_all.csv"))
     if name == "tcga":
         return pd.read_csv(_csv_path("data", "7_tcga_pilot.csv"))
     if name == "tcgafull":
@@ -212,10 +186,58 @@ def _read_cohort_csv(name: str) -> pd.DataFrame:
     if name in SMALL_COHORTS:
         return pd.read_csv(_csv_path("data", f"8_{name}.csv"))
     if name == "support":
-        tr = pd.read_csv(_csv_path("data", "2_support_train_new_with_embeddings_preprocessed_DL.csv"))
-        te = pd.read_csv(_csv_path("data", "2_support_test_new_with_embeddings_preprocessed_DL.csv"))
-        return pd.concat([tr, te], axis=0, ignore_index=True)
+        return _read_support_raw()
+    if name in EXTRA_COHORTS:
+        return pd.read_csv(os.path.join(_data_dir(name), EXTRA_COHORTS[name]["csv"]))
     raise ValueError(name)
+
+
+#: Integer codes for the SUPPORT categoricals -- identical to the coding of the
+#: earlier ``*_preprocessed_DL.csv`` files, so model inputs are unchanged.
+SUPPORT_CODES = {
+    "sex": {"male": 0, "female": 1},
+    "dzclass": {"ARF/MOSF": 0, "COPD/CHF/Cirrhosis": 1, "Cancer": 2, "Coma": 3},
+}
+
+
+def _read_support_raw() -> pd.DataFrame:
+    """SUPPORT with covariates in their original clinical units.
+
+    Earlier versions read ``2_support_*_preprocessed_DL.csv``, whose numeric
+    columns were z-scored (and categoricals integer-coded) in advance. Those
+    values were also rendered into the LLM prompt, which labels them in
+    clinical units (age in years, MAP in mmHg, ...), so the LLM saw e.g.
+    "age = -1.39". The raw files hold the same patients in the same row order;
+    every numeric column of the old file is an exact affine transform of the
+    raw one. The downstream models standardise numerics on the training fold
+    (and tree models are invariant to monotone transforms), so structured-only
+    results are unaffected; only the text seen by the LLM changes.
+
+    ``sex`` / ``dzclass`` keep the integer codes used by the models; the
+    original labels are kept in ``sex_raw`` / ``dzclass_raw`` for the prompt.
+    """
+    tr = pd.read_csv(_csv_path("data", "2_support_train_new.csv"))
+    te = pd.read_csv(_csv_path("data", "2_support_test_new.csv"))
+    df = pd.concat([tr, te], axis=0, ignore_index=True)
+    for col, codes in SUPPORT_CODES.items():
+        df[col + "_raw"] = df[col]
+        df[col] = df[col].map(codes)
+        if df[col].isna().any():
+            raise ValueError(f"unmapped SUPPORT {col} labels: "
+                             f"{sorted(df.loc[df[col].isna(), col + '_raw'].unique())}")
+        df[col] = df[col].astype(int)
+    # Legacy v1 narrative/embedding columns (same row order), kept so that
+    # callers checking for them behave as before.
+    legacy = [pd.read_csv(_csv_path("data", f"2_support_{s}_new_with_embeddings_preprocessed_DL.csv"),
+                          usecols=["time", "event", "generated_texts", "embeddings"])
+              for s in ("train", "test")]
+    legacy = pd.concat(legacy, axis=0, ignore_index=True)
+    if not (np.array_equal(legacy["time"].to_numpy(), df["time"].to_numpy())
+            and np.array_equal(legacy["event"].to_numpy(), df["event"].to_numpy())):
+        raise ValueError("SUPPORT raw and legacy files are not row-aligned")
+    df["generated_texts"] = legacy["generated_texts"].to_numpy()
+    df["embeddings"] = legacy["embeddings"].to_numpy()
+    return df
 
 
 def _parse_embedding_cell(cell):
@@ -404,7 +426,7 @@ def load_dataset(name: str, seed: int, dev_holdout: bool = True,
 
     With ``dev_holdout=True`` (default, the corrected protocol) the fixed
     development rows used for prompt selection are pinned to the training
-    fold; ``dev_holdout=False`` reproduces the as-submitted legacy splits.
+    fold; ``dev_holdout=False`` reproduces the pre-v1.1 splits.
     ``full_support=True`` evaluates on the full 9105-patient SUPPORT cohort
     (default: the fixed 1500-patient subsample).
     """
@@ -502,8 +524,8 @@ def load_dataset_v4(name: str, seed: int, full_support: bool = False,
     if name == "support" and len(df) > SUPPORT_SUBSAMPLE_SIZE and not full_support:
         df = _support_subsample(df)
 
-    struct = pd.read_csv(_csv_path("data", f"{feature_version}_structured_{name}.csv"))
-    text_emb = np.load(_csv_path("data", f"embeddings_{feature_version}_{name}.npy"))
+    struct = pd.read_csv(os.path.join(_data_dir(name), f"{feature_version}_structured_{name}.csv"))
+    text_emb = np.load(os.path.join(_data_dir(name), f"embeddings_{feature_version}_{name}.npy"))
     struct_idx_to_row = {int(pi): i for i, pi in enumerate(struct["patient_idx"].tolist())}
     struct_map = struct.set_index("patient_idx").to_dict("index")
 

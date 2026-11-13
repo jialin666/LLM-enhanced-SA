@@ -15,11 +15,10 @@ For one cohort:
      are the empirical tertiles (33rd/66th percentiles) of that percentile --
      early deaths = low survival, late deaths = high survival. Censored
      patients receive no reference label (their percentile is only a lower
-     bound). ``--legacy-labels`` reproduces the as-submitted construction,
+     bound). ``--legacy-labels`` reproduces the pre-v1.1 construction,
      which cut S_hat(T_i) itself on all development patients and therefore
      labelled early observed times "high survival" and long follow-up "low"
-     (the reverse of the prognosis ordering for events; see the revision
-     response to Reviewer 1, Comment 4).
+     (the reverse of the prognosis ordering for events).
   4. On a random evaluation subset of development patients, generate the
      narrative + numeric estimates with each candidate prompt (one call, v5
      unified design, {BRIEFING} filled per --briefing), pass the narrative
@@ -37,7 +36,7 @@ Outputs (under prompts/):
 
 Usage:
     python -m text_generation.select_prompt --dataset gbsg --reuse-candidates
-    python -m text_generation.select_prompt --dataset gbsg --legacy-labels     # as-submitted labels
+    python -m text_generation.select_prompt --dataset gbsg --legacy-labels     # pre-v1.1 labels
     python -m text_generation.select_prompt --dataset gbsg --legacy-full-cohort
 """
 
@@ -53,9 +52,10 @@ from lifelines import KaplanMeierFitter
 
 from llmsa.data import dev_holdout_positions
 
-from .cohorts import COHORTS
+from .cohorts import COHORTS, prompts_dir
 from .meta_prompt import (
-    BRIEFING_EMPTY, generate_target_prompts, render_features_block, fill_template,
+    BRIEFING_EMPTY, COHORT_HORIZONS, horizon_fields, retarget_horizons,
+    generate_target_prompts, render_features_block, fill_template,
     generate_narrative_and_numerics,
 )
 from .score import score
@@ -125,12 +125,12 @@ def _km_categories(df, legacy: bool = False):
     of deaths is "low", the latest third "high". Returns only the labelled
     (event) rows.
 
-    ``legacy=True`` reproduces the as-submitted construction: tertiles of
+    ``legacy=True`` reproduces the pre-v1.1 construction: tertiles of
     S_hat(T_i) on all rows with low S_hat -> "low". Because S_hat decreases in
     time this labels early observed times "high survival" and long follow-up
     "low survival", i.e. the reverse of the prognosis ordering for events and
     no outcome information for censored patients. Kept for reproducibility
-    of the submitted numbers only.
+    of pre-v1.1 results only.
     """
     kmf = KaplanMeierFitter()
     kmf.fit(df["time"], event_observed=df["event"])
@@ -166,7 +166,8 @@ def select_for_dataset(dataset: str, seed: int = 0,
                        workers: int = 8, reuse_candidates: bool = False):
     cohort = COHORTS[dataset]
     briefing = _select_briefing(cohort, briefing_mode)
-    os.makedirs(PROMPTS_DIR, exist_ok=True)
+    pdir = prompts_dir(dataset, PROMPTS_DIR)
+    os.makedirs(pdir, exist_ok=True)
 
     df = cohort.load_full()
     if dev_only:
@@ -180,7 +181,7 @@ def select_for_dataset(dataset: str, seed: int = 0,
         pool = _km_categories(df, legacy=True)
         if events_only:
             pool = pool[pool["event"] == 1]
-        print(f"[{dataset}] LEGACY (as-submitted, inverted) labels: grading pool has "
+        print(f"[{dataset}] LEGACY (pre-v1.1, inverted) labels: grading pool has "
               f"{len(pool)} patients", flush=True)
     else:
         pool = _km_categories(df)
@@ -192,7 +193,7 @@ def select_for_dataset(dataset: str, seed: int = 0,
     df_eval = pool.sample(min(cohort.n_eval_samples, len(pool)), random_state=seed).copy()
 
     # 1) candidate target prompts
-    tp_path = os.path.join(PROMPTS_DIR, f"{dataset}_target_prompts.json")
+    tp_path = os.path.join(pdir, f"{dataset}_target_prompts.json")
     if reuse_candidates and os.path.exists(tp_path):
         with open(tp_path, encoding="utf-8") as f:
             valid = json.load(f)
@@ -211,10 +212,22 @@ def select_for_dataset(dataset: str, seed: int = 0,
     # Secondary, at no extra API cost in v5: ordinal agreement of the numeric
     # 5-year survival estimate (tertile-ranked within the graded subset) with
     # the same KM labels. Reported alongside; selection uses the primary.
+    # Cohort-matched horizons (COHORT_HORIZONS), applied exactly as in
+    # generate_features so that a prompt is graded in the form it is used.
+    # Numerics come back under the canonical NUMERIC_FIELDS keys.
+    horizons = COHORT_HORIZONS.get(dataset)
+    gen_fields = horizon_fields(*horizons) if horizons else None
+    if horizons:
+        print(f"[{dataset}] grading with horizons: event risk@{horizons[0]}, "
+              f"survival@{horizons[1]}", flush=True)
+
     def _grade_one(text_template, row):
+        if horizons:
+            text_template = retarget_horizons(text_template, *horizons)
         features_block = render_features_block(cohort.sample_dict(row), fmt="bullet")
         filled = fill_template(text_template, features_block, briefing=briefing)
-        narrative, numerics = generate_narrative_and_numerics(filled, model=narrative_model)
+        narrative, numerics = generate_narrative_and_numerics(
+            filled, model=narrative_model, fields=gen_fields)
         s = score(narrative, row["category"], model=grader_model)
         prob = numerics["estimated_5yr_survival_prob"] if numerics is not None else None
         return s, prob, row["category"]
@@ -224,7 +237,7 @@ def select_for_dataset(dataset: str, seed: int = 0,
     # Resumability: grades are checkpointed after every candidate so an
     # interrupted run (the machine's memory watchdog, a network blip) resumes
     # from the last graded candidate instead of re-spending API calls.
-    ckpt_path = os.path.join(PROMPTS_DIR, f"{dataset}_grades.partial.json")
+    ckpt_path = os.path.join(pdir, f"{dataset}_grades.partial.json")
     if os.path.exists(ckpt_path):
         with open(ckpt_path, encoding="utf-8") as f:
             ck = json.load(f)
@@ -253,10 +266,10 @@ def select_for_dataset(dataset: str, seed: int = 0,
         with open(ckpt_path, "w", encoding="utf-8") as f:
             json.dump({"grades": grades, "numeric_grades": numeric_grades}, f, indent=2)
 
-    tg_path = os.path.join(PROMPTS_DIR, f"{dataset}_templates_grades.json")
+    tg_path = os.path.join(pdir, f"{dataset}_templates_grades.json")
     with open(tg_path, "w", encoding="utf-8") as f:
         json.dump(grades, f, indent=2, ensure_ascii=False)
-    ng_path = os.path.join(PROMPTS_DIR, f"{dataset}_numeric_grades.json")
+    ng_path = os.path.join(pdir, f"{dataset}_numeric_grades.json")
     with open(ng_path, "w", encoding="utf-8") as f:
         json.dump(numeric_grades, f, indent=2, ensure_ascii=False)
 
@@ -280,11 +293,11 @@ if __name__ == "__main__":
                    help="(default, kept for compatibility) restrict the graded subset to "
                         "observed events; only meaningful together with --legacy-labels")
     p.add_argument("--legacy-labels", action="store_true",
-                   help="reproduce the as-submitted reference labels (tertiles of S_hat(T_i) "
+                   help="reproduce the pre-v1.1 reference labels (tertiles of S_hat(T_i) "
                         "on all development patients, which are inverted for events); "
                         "for comparison only")
     p.add_argument("--legacy-full-cohort", action="store_true",
-                   help="reproduce the as-submitted behaviour (KM and grading "
+                   help="reproduce the pre-v1.1 behaviour (KM and grading "
                         "subset drawn from the full cohort); leaks test outcomes "
                         "into prompt selection -- for comparison only")
     p.add_argument("--briefing", choices=["sanitized", "none"], default="sanitized",
