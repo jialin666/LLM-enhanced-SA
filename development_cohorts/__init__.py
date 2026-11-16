@@ -42,9 +42,56 @@ TIME_UNIT_PER_YEAR = {"rotterdam": 365.25, "whas500": 365.25, "brcamicro": 365.2
                       "aids": 365.25, "lung": 365.25, "veteran": 365.25, "larynx": 1.0}
 
 # ACTG320: follow-up 364 d, median event 91 d; 90d/270d bracket 46 and 94 of 96 events
-HORIZONS = {"aids": ("90d", "270d")}
+HORIZONS = {"aids": ("90d", "270d"),
+            # Veteran: follow-up 999 d, median time 80 d; NCCTG Lung: follow-up 1022 d, median 256 d
+            "veteran": ("60d", "180d"), "lung": ("180d", "365d")}
 _D = 365.25
-ANCHOR_YEARS = {("v5hz", "aids"): (90.0 / _D, 270.0 / _D)}
+ANCHOR_YEARS = {("v5hz", "aids"): (90.0 / _D, 270.0 / _D),
+                ("v5rawmini", "aids"): (90.0 / _D, 270.0 / _D),
+                ("v5rawmini", "veteran"): (60.0 / _D, 180.0 / _D),
+                ("v5rawmini", "lung"): (180.0 / _D, 365.0 / _D)}
+
+# Codebooks of the coded categorical covariates (Hosmer, Lemeshow and May,
+# Applied Survival Analysis, 2nd ed.; R survival::rotterdam). The LLM receives
+# the labels (<col>_lbl); the model inputs keep the integer codes.
+CODEBOOKS = {
+    "aids": {
+        "sex": {1: "male", 2: "female"},
+        "raceth": {1: "White non-Hispanic", 2: "Black non-Hispanic", 3: "Hispanic",
+                   4: "Asian or Pacific Islander", 5: "American Indian or Alaskan Native"},
+        "ivdrug": {1: "never", 2: "current", 3: "previous"},
+        "hemophil": {0: "no", 1: "yes"},
+        "strat2": {0: "CD4 <= 50 cells/mm3 at screening", 1: "CD4 > 50 cells/mm3 at screening"},
+        "tx": {0: "two-drug regimen without indinavir", 1: "three-drug regimen including indinavir"},
+        "txgrp": {1: "zidovudine + lamivudine", 2: "zidovudine + lamivudine + indinavir",
+                  3: "stavudine + lamivudine", 4: "stavudine + lamivudine + indinavir"},
+    },
+    "whas500": {
+        "gender": {0: "male", 1: "female"},
+        **{c: {0: "no", 1: "yes"} for c in ("afb", "av3", "chf", "cvd", "sho")},
+        "miord": {0: "first", 1: "recurrent"},
+        "mitype": {0: "non-Q-wave", 1: "Q-wave"},
+    },
+    "rotterdam": {
+        "meno": {0: "premenopausal", 1: "postmenopausal"},
+        "hormon": {0: "no", 1: "yes"},
+    },
+}
+
+
+def _labeller(name):
+    """Add <col>_lbl from the integer codes (<col>_raw when present, else <col>)."""
+    def prepare(df):
+        for col, book in CODEBOOKS[name].items():
+            src = col + "_raw" if col + "_raw" in df.columns else col
+            lbl = df[src].map(book)
+            if lbl.isna().any():
+                raise ValueError(f"{name}.{src}: codes outside the codebook: "
+                                 f"{sorted(df.loc[lbl.isna(), src].unique())}")
+            df[col + "_lbl"] = lbl
+        return df
+    return prepare
+
 
 # Rotterdam uses the GBSG briefing (same disease, same covariates).
 _GBSG_BRIEFING = _BRIEFINGS["gbsg"]
@@ -61,19 +108,19 @@ Description:
 
 _ROTTERDAM_FEATS = """
     age: age at surgery, years
-    meno: menopausal status (0= premenopausal, 1= postmenopausal)
+    meno: menopausal status (premenopausal or postmenopausal)
     size: tumour size category (<=20 mm, 20-50 mm, >50 mm)
     grade: tumour grade (2 or 3)
     nodes: number of positive lymph nodes
     pgr: progesterone receptors (fmol/l)
     er: estrogen receptors (fmol/l)
-    hormon: hormonal therapy, 0= no, 1= yes
+    hormon: hormonal therapy (yes/no)
     """
 
 COHORTS["rotterdam"] = Cohort(
     name="rotterdam", description=_ROTTERDAM_DESC, feature_list=_ROTTERDAM_FEATS,
-    feature_cols=["age", "meno", "size_raw", "grade_raw", "nodes", "pgr", "er", "hormon"],
-    feature_labels={"size_raw": "size", "grade_raw": "grade"},
+    feature_cols=["age", "meno_lbl", "size_raw", "grade_raw", "nodes", "pgr", "er", "hormon_lbl"],
+    feature_labels={"meno_lbl": "meno", "size_raw": "size", "grade_raw": "grade", "hormon_lbl": "hormon"},
     briefing=_GBSG_BRIEFING,
     _cat=list(COVARIATES['rotterdam'][0]), _num=list(COVARIATES['rotterdam'][1]),
 )
@@ -101,9 +148,9 @@ COHORTS['lung'] = Cohort(
 BRIEFINGS['whas500'] = 'Cohort context (hospitalised acute myocardial infarction, use as background knowledge):\n- Older age is the dominant determinant of mortality after myocardial infarction.\n- Cardiogenic shock and complete heart block are severe complications carrying very high\n  short-term mortality; congestive heart failure complicating infarction is also strongly adverse.\n- Recurrent infarction implies worse prognosis than a first event.\n- Both hypotension and marked tachycardia at admission indicate haemodynamic compromise.\n- Very low body mass index is associated with frailty and worse outcome.'
 COHORTS['whas500'] = Cohort(
     name='whas500', description='Source: Worcester Heart Attack Study (WHAS500).\nDescription:\n    A population-based study of 500 patients hospitalised with acute myocardial infarction in\n    Worcester, Massachusetts, followed for all-cause mortality after admission.\n', feature_list='\n    age: age in years\n    bmi: body mass index at admission\n    sysbp: systolic blood pressure at admission (mmHg)\n    diasbp: diastolic blood pressure at admission (mmHg)\n    hr: initial heart rate (beats per minute)\n    gender: patient sex\n    chf: congestive heart failure complications (yes/no)\n    afb: atrial fibrillation (yes/no)\n    av3: complete heart block (yes/no)\n    cvd: cardiovascular disease history (yes/no)\n    miord: MI order (first or recurrent)\n    mitype: MI type (Q-wave or non-Q-wave)\n    sho: cardiogenic shock (yes/no)\n    ',
-    feature_cols=[c + "_raw" if c in COVARIATES['whas500'][0] else c
+    feature_cols=[c + "_lbl" if c in COVARIATES['whas500'][0] else c
                   for c in list(COVARIATES['whas500'][1]) + list(COVARIATES['whas500'][0])],
-    feature_labels={c + "_raw": c for c in COVARIATES['whas500'][0]},
+    feature_labels={c + "_lbl": c for c in COVARIATES['whas500'][0]},
     briefing=BRIEFINGS['whas500'],
     _cat=list(COVARIATES['whas500'][0]), _num=list(COVARIATES['whas500'][1]),
 )
@@ -120,10 +167,10 @@ COHORTS['larynx'] = Cohort(
 
 BRIEFINGS['aids'] = 'Cohort context (HIV infection with prior antiretroviral therapy, use as background knowledge):\n- The baseline CD4 count is the dominant prognostic marker: low counts indicate advanced\n  immunosuppression and a high risk of progression to AIDS or death.\n- Poorer Karnofsky performance status indicates greater disease burden.\n- Extensive prior monotherapy is associated with drug resistance and reduced response.\n- Three-drug regimens were substantially more effective than two-drug regimens in this era.'
 COHORTS['aids'] = Cohort(
-    name='aids', description='Source: AIDS Clinical Trials Group protocol 320 (ACTG 320).\nDescription:\n    A randomised trial in HIV-infected patients with prior antiretroviral therapy comparing\n    two- and three-drug regimens. The endpoint is progression to AIDS or death.\n', feature_list='\n    age: age in years\n    cd4: baseline CD4 T-cell count (cells/mm3)\n    priorzdv: months of prior zidovudine therapy\n    karnof: Karnofsky performance score category\n    sex: patient sex\n    raceth: race/ethnicity category\n    ivdrug: history of intravenous drug use\n    hemophil: haemophilia (yes/no)\n    strat2: CD4 stratum at entry\n    tx: treatment assignment\n    txgrp: treatment group\n    ',
-    feature_cols=[c + "_raw" if c in COVARIATES['aids'][0] else c
+    name='aids', description='Source: AIDS Clinical Trials Group protocol 320 (ACTG 320).\nDescription:\n    A randomised trial in HIV-infected patients with prior antiretroviral therapy comparing\n    two- and three-drug regimens. The endpoint is progression to AIDS or death.\n', feature_list='\n    age: age in years\n    cd4: baseline CD4 T-cell count (cells/mm3)\n    priorzdv: months of prior zidovudine therapy\n    karnof: Karnofsky performance score (70-100; higher is better functional status)\n    sex: patient sex\n    raceth: race/ethnicity category\n    ivdrug: history of intravenous drug use\n    hemophil: haemophilia (yes/no)\n    strat2: CD4 stratum at screening\n    tx: treatment assignment (with or without indinavir)\n    txgrp: treatment regimen\n    ',
+    feature_cols=[(c + "_raw" if c in ['karnof'] else c + "_lbl") if c in COVARIATES['aids'][0] else c
                   for c in list(COVARIATES['aids'][1]) + list(COVARIATES['aids'][0])],
-    feature_labels={c + "_raw": c for c in COVARIATES['aids'][0]},
+    feature_labels={c + ("_raw" if c in ['karnof'] else "_lbl"): c for c in COVARIATES['aids'][0]},
     briefing=BRIEFINGS['aids'],
     _cat=list(COVARIATES['aids'][0]), _num=list(COVARIATES['aids'][1]),
 )
@@ -141,7 +188,8 @@ COHORTS['brcamicro'] = Cohort(
 
 def register():
     for name, (cat, num) in COVARIATES.items():
-        _data.EXTRA_COHORTS[name] = {"cat": cat, "num": num, "dir": DATA_DIR, "csv": CSV[name]}
+        _data.EXTRA_COHORTS[name] = {"cat": cat, "num": num, "dir": DATA_DIR, "csv": CSV[name],
+                                     "prepare": _labeller(name) if name in CODEBOOKS else None}
         _cohorts.PROMPT_DIRS[name] = PROMPTS_DIR
     _train_eval.EXTRA_CFG.update(SETTINGS)
     _model._TIME_UNIT_PER_YEAR.update(TIME_UNIT_PER_YEAR)

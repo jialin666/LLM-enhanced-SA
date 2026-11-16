@@ -77,7 +77,10 @@ NCCTG Lung, ACTG320, breast-cancer microarray) evaluated during method developme
 of the benchmark, with their cohort definitions and candidate prompts; their LLM outputs and
 results are in the release asset (see **Released LLM outputs**). Any
 script runs on them through `python -m development_cohorts.run <module> [arguments]`, e.g.
-`python -m development_cohorts.run llmsa.run_ablation --datasets larynx --feature-version v5 --cindex-tau grid`.
+`python -m development_cohorts.run llmsa.run_ablation --datasets larynx --feature-version v5rawmini --cindex-tau grid`.
+Their LLM features (`v5rawmini`) give the LLM the labels of coded categorical covariates
+(`CODEBOOKS` in `development_cohorts/__init__.py`) and ask for horizons within each cohort's
+follow-up (90/270 days for ACTG320, 60/180 days for Veteran, 180/365 days for NCCTG Lung).
 
 ---
 
@@ -256,13 +259,13 @@ subsample was a development-time convenience and is not used in the paper.
 ## Released LLM outputs
 
 The per-patient outputs behind every reported number are published as the
-release asset `llmsa-llm-outputs.tar.gz` of release **v1.2**:
-<https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.2/llmsa-llm-outputs.tar.gz>
-(release page: <https://github.com/jialin666/LLM-enhanced-SA/releases/tag/v1.2>).
+release asset `llmsa-llm-outputs.tar.gz` of release **v1.3**:
+<https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.3/llmsa-llm-outputs.tar.gz>
+(release page: <https://github.com/jialin666/LLM-enhanced-SA/releases/tag/v1.3>).
 
 ```bash
 curl -L -o llmsa-llm-outputs.tar.gz \
-  https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.2/llmsa-llm-outputs.tar.gz
+  https://github.com/jialin666/LLM-enhanced-SA/releases/download/v1.3/llmsa-llm-outputs.tar.gz
 tar -xzf llmsa-llm-outputs.tar.gz          # unpacks into data/, development_cohorts/data/ and results/
 ```
 
@@ -280,8 +283,8 @@ the parsed JSON (`data/<tag>/narratives/<cohort>/`):
 | `v5` / `v5mini` | GBSG, METABRIC, TCGA, Heart Failure, WPBC / FLCHAIN | cohort briefing comparison (with briefing) |
 | `v5nobrief` / `v5nobriefmini` / `v5nobriefrawmini` | the same cohorts / FLCHAIN / SUPPORT | cohort briefing comparison (without briefing) |
 
-It also contains the same outputs for the development cohorts
-(`development_cohorts/data/`) and `results/per_split_results.csv`, the per-split
+It also contains the outputs for the development cohorts
+(`development_cohorts/data/`; `v5rawmini`, and `v5nobrief` for Larynx without the briefing) and `results/per_split_results.csv`, the per-split
 test C-index and IBS of every reported run (columns `experiment`, `cohort`,
 `model`, `features`, `train_n`, `draw`, `split`, `cindex`, `ibs`). The full text
 of every cohort briefing is in `text_generation/cohorts.py`.

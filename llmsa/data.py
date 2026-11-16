@@ -117,7 +117,8 @@ SMALL_COHORTS = {
 ALL_DATASETS = ("metabric", "gbsg", "support", "flchain", "tcga", "tcgafull")
 
 # Further cohorts can be registered at run time without editing this module:
-# name -> {"cat": [...], "num": [...], "dir": <data directory>, "csv": <file name>}.
+# name -> {"cat": [...], "num": [...], "dir": <data directory>, "csv": <file name>,
+#          "prepare": <optional callable applied to the loaded frame>}.
 # Their cohort CSV and LLM artefacts are read from "dir" instead of data/.
 EXTRA_COHORTS: dict = {}
 
@@ -188,7 +189,9 @@ def _read_cohort_csv(name: str) -> pd.DataFrame:
     if name == "support":
         return _read_support_raw()
     if name in EXTRA_COHORTS:
-        return pd.read_csv(os.path.join(_data_dir(name), EXTRA_COHORTS[name]["csv"]))
+        df = pd.read_csv(os.path.join(_data_dir(name), EXTRA_COHORTS[name]["csv"]))
+        prepare = EXTRA_COHORTS[name].get("prepare")
+        return prepare(df) if prepare else df
     raise ValueError(name)
 
 

@@ -75,3 +75,32 @@ development cohorts.
 
 - `llmsa/tune_llmsa_pca_batch.py`: validation-fold tuning of the LLM-SA PCA
   dimension and batch size, with the same protocol as the baselines.
+
+## 6. Development cohorts: labelled categoricals and horizons within follow-up (v1.3)
+
+**Problem.** The coded categorical covariates of ACTG320 and WHAS500 (and
+`meno` / `hormon` of Rotterdam) reached the LLM prompt as integer codes. For
+example, ACTG320 `ivdrug=1` means "never", and `tx=0` means the two-drug regimen.
+Veteran, NCCTG Lung and ACTG320 were also asked for 2-year / 5-year estimates,
+beyond their follow-up.
+
+**Fix.**
+- `development_cohorts/__init__.py`: `CODEBOOKS` holds the codebooks of these
+  covariates, and the loader adds `<col>_lbl` label columns, which the prompts
+  show. The model inputs keep the integer codes.
+- `llmsa/data.py`: a registered cohort may define a `prepare` function, applied
+  to its frame on loading.
+- Horizons within follow-up: 90/270 days for ACTG320, 60/180 days for Veteran,
+  180/365 days for NCCTG Lung.
+- All seven development cohorts were regenerated with these inputs (tag
+  `v5rawmini`; prompt selection graded by `gpt-4o`, narratives and estimates by
+  `gpt-4o-mini`) and re-run over 30 splits:
+
+      python -m development_cohorts.run llmsa.run_ablation --seeds 30 \
+          --datasets aids,whas500,veteran,lung,rotterdam,larynx,brcamicro \
+          --feature-version v5rawmini --cindex-tau grid
+
+**Effect.** Baselines and ablation cell A are unchanged (they do not use the
+LLM inputs). The v1.3 release asset contains the `v5rawmini` development-cohort
+outputs, and its `results/per_split_results.csv` holds the re-run cells B–D
+(experiment `development`).
